@@ -1,0 +1,56 @@
+[package]
+name = "gpu-cert"
+version = "0.1.0"
+edition = "2021"
+description = "GPU hardware verification client — telemetry, stress test, VRAM pattern test, fingerprint"
+
+[[bin]]
+name = "gpu-cert"
+path = "src/main.rs"
+
+[dependencies]
+# Raw Vulkan bindings — needs buffer-level control for the VRAM pattern test
+# and the custom stress kernels, which wgpu's abstraction would hide.
+ash = "0.38"
+
+# Dynamic-load NVML (nvml.dll) at runtime instead of bundling/linking it,
+# matching how MSI Afterburner / HWiNFO do it.
+libloading = "0.8"
+
+# JSON payload for the /api/certify report submission
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client for submitting the report to the backend. rustls (not the
+# native-tls default) so the build doesn't depend on a system OpenSSL —
+# neither this Linux dev box nor a bare Windows target machine can be
+# relied on to have OpenSSL headers/libs available.
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+
+# Hardware fingerprint hashing (UUID + PCI device ID + VRAM size + VBIOS version)
+sha2 = "0.10"
+
+anyhow = "1"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Win32 calls needed alongside NVML/ADL (module loading, registry reads for
+# fallback identification, etc.)
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_ProcessStatus",
+] }
+
+[build-dependencies]
+# Compiles the stress/VRAM-test shaders to SPIR-V at build time.
+# Pure-Rust (not shaderc): shaderc-sys builds glslang/shaderc from source
+# via CMake, which isn't available in this dev environment and shouldn't be
+# a required toolchain dependency for contributors either. Most shaders are
+# GLSL (glsl-in); vram_pattern.wgsl needs wgsl-in specifically because
+# naga's GLSL front-end has no atomic op support at all.
+naga = { version = "24", features = ["glsl-in", "wgsl-in", "spv-out"] }
+
+[profile.release]
+opt-level = 3
+lto = true

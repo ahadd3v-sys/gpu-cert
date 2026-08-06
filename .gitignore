@@ -1,0 +1,6 @@
+/client/target
+/backend/node_modules
+/backend/local.db
+/backend/.env.local
+/backend/tsconfig.tsbuildinfo
+.DS_Store

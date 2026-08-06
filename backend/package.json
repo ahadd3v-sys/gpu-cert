@@ -1,0 +1,22 @@
+{
+  "name": "gpu-cert-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/dev.ts",
+    "typecheck": "tsc --noEmit",
+    "gen-signing-key": "tsx scripts/gen-signing-key.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.0",
+    "@libsql/client": "^0.17.4",
+    "@vercel/og": "^0.8.6",
+    "hono": "^4.13.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.23.6",
+    "typescript": "^5"
+  }
+}
