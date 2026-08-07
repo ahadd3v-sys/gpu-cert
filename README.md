@@ -66,13 +66,15 @@ once that lands.
 This was scaffolded from a Linux dev environment, which shapes what could
 actually be verified here vs. what's still gated on real hardware:
 
-- **Cross-compilation to Windows is unverified.** `x86_64-pc-windows-msvc`
-  fails to build from this box: `ring` (pulled in transitively via
-  `reqwest`'s `rustls-tls` feature) needs `lib.exe` from a real MSVC
-  toolchain, which isn't installable here. `x86_64-pc-windows-gnu` via
-  mingw-w64 would likely work but hasn't been tried (mingw-w64 isn't
-  installed). Until one of these is verified, treat "does this even build
-  for Windows" as an open question, not a given.
+- **Windows cross-compilation is verified via the GNU target.**
+  `x86_64-pc-windows-msvc` still fails from this box (`ring`, pulled in
+  transitively via `reqwest`'s `rustls-tls` feature, needs `lib.exe` from a
+  real MSVC toolchain that isn't installable here). But
+  `cargo build --release --target x86_64-pc-windows-gnu` (with
+  `gcc-mingw-w64-x86-64` installed) builds and links cleanly — a real
+  PE32+ Windows console exe, 3.8 MB release / stripped. This is the target
+  to ship from. Still unverified: whether it actually *runs* correctly —
+  no real Windows machine or GPU here to test against.
 - **NVML/ADL/Vulkan can't be exercised at all here** — no real driver, GPU,
   or Windows Vulkan ICD in this dev environment. `cargo check`/`cargo build`
   (native Linux target) and the shader→SPIR-V build step both pass, and the
