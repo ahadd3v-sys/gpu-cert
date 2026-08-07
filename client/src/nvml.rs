@@ -129,7 +129,7 @@ impl Nvml {
             let device_get_uuid = sym!(b"nvmlDeviceGetUUID\0", unsafe extern "C" fn(NvmlDevice, *mut c_char, c_uint) -> i32);
             let device_get_name = sym!(b"nvmlDeviceGetName\0", unsafe extern "C" fn(NvmlDevice, *mut c_char, c_uint) -> i32);
             let device_get_pci_info = sym!(b"nvmlDeviceGetPciInfo_v3\0", unsafe extern "C" fn(NvmlDevice, *mut NvmlPciInfo) -> i32);
-            let device_get_vbios = sym!(b"nvmlSystemGetDriverVersion\0", unsafe extern "C" fn(NvmlDevice, *mut c_char, c_uint) -> i32); // placeholder, see note below
+            let device_get_vbios = sym!(b"nvmlDeviceGetVbiosVersion\0", unsafe extern "C" fn(NvmlDevice, *mut c_char, c_uint) -> i32);
             let device_get_memory_info = sym!(b"nvmlDeviceGetMemoryInfo\0", unsafe extern "C" fn(NvmlDevice, *mut NvmlMemoryInfo) -> i32);
             let device_get_temperature = sym!(b"nvmlDeviceGetTemperature\0", unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> i32);
             let device_get_power_usage = sym!(b"nvmlDeviceGetPowerUsage\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
@@ -208,15 +208,14 @@ impl Nvml {
             let mut utilization = NvmlUtilization { gpu: 0, memory: 0 };
             check((self.device_get_utilization_rates)(device, &mut utilization))?;
 
+            let vbios_version =
+                self.read_string(device, &self.device_get_vbios, NVML_DEVICE_VBIOS_VERSION_BUFFER_SIZE)?;
+
             Ok(GpuTelemetry {
                 uuid,
                 name,
                 pci_device_id: pci.pci_device_id,
-                // TODO: nvmlDeviceGetVbiosVersion is the real call (needs its
-                // own symbol + buffer size, NVML_DEVICE_VBIOS_VERSION_BUFFER_SIZE);
-                // wired to a placeholder symbol above so this module links
-                // cleanly during scaffolding. Swap before first real run.
-                vbios_version: String::new(),
+                vbios_version,
                 vram_total_bytes: mem.total,
                 temperature_c: temp,
                 power_draw_mw: power,

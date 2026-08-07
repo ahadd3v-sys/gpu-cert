@@ -12,6 +12,7 @@
     "@libsql/client": "^0.17.4",
     "@vercel/og": "^0.8.6",
     "hono": "^4.13.0",
+    "jose": "^6.2.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {

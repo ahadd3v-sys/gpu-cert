@@ -8,6 +8,7 @@ export const TelemetrySampleSchema = z.object({
   power_draw_mw: z.number().int().nonnegative(),
   graphics_clock_mhz: z.number().int().nonnegative(),
   memory_clock_mhz: z.number().int().nonnegative(),
+  utilization_pct: z.number().int().min(0).max(100),
 });
 
 export const CertifyRequestSchema = z.object({

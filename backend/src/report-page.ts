@@ -1,22 +1,26 @@
 import type { ReportRow } from "../lib/db";
+import { esc } from "./html";
 
 // Hand-written HTML string, not JSX — this is a single static-shaped page
 // with no interactivity, and skipping JSX means skipping React as a
 // runtime dependency entirely (see badge.ts for the same reasoning on the
-// image route). esc() is the only thing standing between report fields
-// and the page, so every interpolated value must go through it.
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-}
-
+// image route).
 function formatBytes(bytes: number): string {
   const gb = bytes / 1024 ** 3;
   return `${gb.toFixed(1)} GB`;
 }
 
-export function renderReportPage(report: ReportRow): string {
+export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): string {
   const passed = report.verdict === "Pass";
   const badgeColor = passed ? "#2fbf71" : "#e5484d";
+  const claimSection =
+    report.user_id === null
+      ? viewerLoggedIn
+        ? `<form method="post" action="/r/${esc(report.id)}/claim" style="margin-top:24px;">
+             <button type="submit">Save to my account</button>
+           </form>`
+        : `<p class="meta" style="margin-top:24px;"><a href="/login?next=/r/${esc(report.id)}">Log in</a> to save this report to your account.</p>`
+      : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -69,6 +73,8 @@ export function renderReportPage(report: ReportRow): string {
     <h2>Fingerprint</h2>
     <p class="hash">${esc(report.fingerprint_hash)}</p>
   </section>
+
+  ${claimSection}
 
   <p class="report-id">Report ID: ${esc(report.id)}</p>
 </main>
