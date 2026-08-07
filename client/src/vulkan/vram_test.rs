@@ -36,12 +36,16 @@ pub struct VramTestResult {
 /// `test_fraction` of total VRAM (never 100%: the driver/OS needs headroom,
 /// and Vulkan allocations that eat the whole heap tend to fail outright)
 /// until `min_duration` has elapsed, varying the seed each pass so repeated
-/// runs don't alias onto the same addresses in the same order.
+/// runs don't alias onto the same addresses in the same order. `on_pass` is
+/// invoked after every fill+verify pass with the running (passes_run,
+/// total_errors) so far, mirroring stress::run's on_tick — this is what the
+/// GUI polls to show live progress during a 10-minute test.
 pub fn run(
     ctx: &VulkanContext,
     vram_total_bytes: u64,
     test_fraction: f64,
     min_duration: Duration,
+    mut on_pass: impl FnMut(u32, u64),
 ) -> anyhow::Result<VramTestResult> {
     let element_count = ((vram_total_bytes as f64 * test_fraction) / 4.0) as u32;
     let buffer_size = (element_count as u64) * 4;
@@ -85,6 +89,7 @@ pub fn run(
 
             total_errors += read_error_counter(ctx, &error_buffer)? as u64;
             passes_run += 1;
+            on_pass(passes_run, total_errors);
         }
         Ok(())
     })();

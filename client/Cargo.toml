@@ -32,6 +32,8 @@ sha2 = "0.10"
 
 anyhow = "1"
 thiserror = "2"
+eframe = { version = "0.36.0", default-features = false, features = ["default_fonts", "glow", "x11"] }
+egui = "=0.36.0"
 
 [target.'cfg(windows)'.dependencies]
 # Win32 calls needed alongside NVML/ADL (module loading, registry reads for
