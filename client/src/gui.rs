@@ -168,10 +168,13 @@ fn configure_style(ctx: &egui::Context) {
     visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, tokens::LINE);
     visuals.hyperlink_color = tokens::ACCENT;
     visuals.selection.bg_fill = tokens::ACCENT;
+    // Striped sensor-grid rows: a faint lighten of SURFACE, not egui's
+    // default gray, so the stripe reads as part of the same palette.
+    visuals.faint_bg_color = egui::Color32::from_rgb(0x20, 0x1D, 0x18);
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
-    style.spacing.item_spacing = egui::vec2(6.0, 10.0);
+    style.spacing.item_spacing = egui::vec2(6.0, 6.0);
     ctx.set_style_of(egui::Theme::Dark, style);
 }
 
@@ -183,17 +186,14 @@ fn eyebrow(text: impl Into<String>) -> egui::RichText {
     egui::RichText::new(text).color(tokens::MUTED).size(11.0).extra_letter_spacing(0.6)
 }
 
-/// A concise key/value row: muted label on the left, tabular-monospace
-/// value on the right — monospace here only because these are numbers that
-/// need to line up as they update, the same reasoning anurfi-board's own
-/// `.tabular` utility exists for, not a leftover "instrument" aesthetic.
-fn info_row(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).color(tokens::MUTED).size(12.5));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(egui::RichText::new(value).monospace().color(tokens::INK).size(12.5));
-        });
-    });
+/// One row of the sensor grid: muted label, tabular-monospace value in its
+/// own aligned column — an `egui::Grid` row, not a manually right-aligned
+/// horizontal layout, specifically so values line up across every row the
+/// way GPU-Z's/HWiNFO's own sensor tables do.
+fn grid_row(ui: &mut egui::Ui, label: &str, value: impl Into<String>, value_color: egui::Color32) {
+    ui.label(egui::RichText::new(label).color(tokens::MUTED).size(12.0));
+    ui.label(egui::RichText::new(value.into()).monospace().color(value_color).size(12.0));
+    ui.end_row();
 }
 
 fn format_mmss(ms: u64) -> String {
@@ -285,7 +285,7 @@ impl eframe::App for GpuCertApp {
                         .extra_letter_spacing(1.2),
                 );
             });
-            ui.add_space(18.0);
+            ui.add_space(10.0);
 
             ui.label(eyebrow(match self.phase {
                 Phase::ReadingGpu => "Reading device",
@@ -294,15 +294,6 @@ impl eframe::App for GpuCertApp {
                 Phase::Submitting => "Submitting",
                 Phase::Done => "Done",
             }));
-            ui.add_space(4.0);
-            if let Some(name) = &self.device_name {
-                ui.label(
-                    egui::RichText::new(name)
-                        .color(tokens::INK)
-                        .size(15.0)
-                        .strong(),
-                );
-            }
 
             let (total_duration, show_progress) = match self.phase {
                 Phase::Stressing => (STRESS_TEST_DURATION, true),
@@ -310,10 +301,10 @@ impl eframe::App for GpuCertApp {
                 _ => (Duration::ZERO, false),
             };
             if show_progress {
-                ui.add_space(10.0);
+                ui.add_space(6.0);
                 let fraction = (self.elapsed_ms as f32 / total_duration.as_millis() as f32).min(1.0);
                 ui.add(egui::ProgressBar::new(fraction).fill(tokens::ACCENT).desired_height(4.0).corner_radius(2.0));
-                ui.add_space(3.0);
+                ui.add_space(2.0);
                 ui.label(
                     egui::RichText::new(format!(
                         "{} / {}",
@@ -325,65 +316,82 @@ impl eframe::App for GpuCertApp {
                 );
             }
 
-            ui.add_space(16.0);
+            // A persistent, always-visible grid (GPU-Z/HWiNFO's own layout
+            // language: a fixed set of sensor rows that fill in and update
+            // live, not a panel that restructures per phase) rather than
+            // swapping which rows exist depending on test phase — that
+            // reflow was the "weird" part of the previous layout.
+            ui.add_space(10.0);
             egui::Frame::new()
                 .fill(tokens::SURFACE)
                 .stroke(egui::Stroke::new(1.0, tokens::LINE))
-                .corner_radius(6.0)
-                .inner_margin(egui::Margin::symmetric(14, 12))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(12, 8))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    match self.phase {
-                        Phase::ReadingGpu => {
-                            ui.label(egui::RichText::new("Waiting for device…").color(tokens::MUTED));
-                        }
-                        Phase::Stressing => {
-                            if let Some(sample) = &self.latest_sample {
-                                info_row(ui, "Temp", format!("{}°C", sample.temperature_c));
-                                info_row(ui, "Load", format!("{}%", sample.utilization_pct));
-                                info_row(ui, "Power", format!("{} W", sample.power_draw_mw / 1000));
-                                info_row(ui, "Core clock", format!("{} MHz", sample.graphics_clock_mhz));
-                                info_row(ui, "Memory clock", format!("{} MHz", sample.memory_clock_mhz));
-                            } else {
-                                ui.label(egui::RichText::new("Warming up…").color(tokens::MUTED));
-                            }
-                        }
-                        Phase::TestingVram => {
-                            info_row(ui, "VRAM tested", format!("{} MB", self.vram_mb.unwrap_or(0)));
-                            info_row(ui, "Passes", self.vram_passes.to_string());
-                            info_row(
+                    let dash = "—".to_string();
+                    egui::Grid::new("sensor_grid")
+                        .num_columns(2)
+                        .spacing(egui::vec2(12.0, 5.0))
+                        .striped(true)
+                        .show(ui, |ui| {
+                            grid_row(ui, "Device", self.device_name.clone().unwrap_or_else(|| dash.clone()), tokens::INK);
+                            grid_row(
                                 ui,
-                                "Errors",
-                                egui::RichText::new(self.vram_errors.to_string())
-                                    .color(if self.vram_errors > 0 { tokens::FAIL } else { tokens::INK })
-                                    .monospace()
-                                    .text(),
+                                "VRAM",
+                                self.vram_mb.map(|v| format!("{v} MB")).unwrap_or_else(|| dash.clone()),
+                                tokens::INK,
                             );
-                        }
-                        Phase::Submitting => {
-                            ui.label(egui::RichText::new("Uploading results…").color(tokens::MUTED));
-                        }
-                        Phase::Done => {
-                            if let Some(dispatch_count) = self.stress_dispatch_count {
-                                info_row(ui, "Stress dispatches", dispatch_count.to_string());
-                            }
-                            info_row(ui, "VRAM passes", self.vram_passes.to_string());
-                            info_row(ui, "VRAM errors", self.vram_errors.to_string());
-                        }
-                    }
-                    if let Some(fp) = &self.fingerprint {
-                        ui.add_space(6.0);
-                        ui.label(
-                            egui::RichText::new(format!("fingerprint {fp}"))
-                                .monospace()
-                                .color(tokens::MUTED_2)
-                                .size(10.5),
-                        );
-                    }
+                            grid_row(
+                                ui,
+                                "Temp",
+                                self.latest_sample.as_ref().map(|s| format!("{}°C", s.temperature_c)).unwrap_or_else(|| dash.clone()),
+                                tokens::INK,
+                            );
+                            grid_row(
+                                ui,
+                                "Load",
+                                self.latest_sample.as_ref().map(|s| format!("{}%", s.utilization_pct)).unwrap_or_else(|| dash.clone()),
+                                tokens::INK,
+                            );
+                            grid_row(
+                                ui,
+                                "Power",
+                                self.latest_sample.as_ref().map(|s| format!("{} W", s.power_draw_mw / 1000)).unwrap_or_else(|| dash.clone()),
+                                tokens::INK,
+                            );
+                            grid_row(
+                                ui,
+                                "Core clock",
+                                self.latest_sample.as_ref().map(|s| format!("{} MHz", s.graphics_clock_mhz)).unwrap_or_else(|| dash.clone()),
+                                tokens::INK,
+                            );
+                            grid_row(
+                                ui,
+                                "Memory clock",
+                                self.latest_sample.as_ref().map(|s| format!("{} MHz", s.memory_clock_mhz)).unwrap_or_else(|| dash.clone()),
+                                tokens::INK,
+                            );
+                            let vram_active = matches!(self.phase, Phase::TestingVram | Phase::Done);
+                            grid_row(ui, "VRAM passes", if vram_active { self.vram_passes.to_string() } else { dash.clone() }, tokens::INK);
+                            grid_row(
+                                ui,
+                                "VRAM errors",
+                                if vram_active { self.vram_errors.to_string() } else { dash.clone() },
+                                if self.vram_errors > 0 { tokens::FAIL } else { tokens::INK },
+                            );
+                            grid_row(
+                                ui,
+                                "Stress dispatches",
+                                self.stress_dispatch_count.map(|d| d.to_string()).unwrap_or_else(|| dash.clone()),
+                                tokens::INK,
+                            );
+                            grid_row(ui, "Fingerprint", self.fingerprint.clone().unwrap_or_else(|| dash.clone()), tokens::MUTED_2);
+                        });
                 });
 
             if self.phase == Phase::Done {
-                ui.add_space(16.0);
+                ui.add_space(12.0);
                 match &self.result {
                     Some(Ok((report_url, _badge_url, passed))) => {
                         let (text, color) = if *passed {
