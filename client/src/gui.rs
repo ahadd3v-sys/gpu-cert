@@ -27,7 +27,7 @@ pub enum Progress {
     StressSample(TelemetrySample),
     StressDone { dispatch_count: u32 },
     VramStarted,
-    VramProgress { passes_run: u32, total_errors: u64 },
+    VramProgress { passes_run: u32, total_errors: u64, elapsed_ms: u64 },
     VramDone { passes_run: u32, total_errors: u64 },
     Submitting,
     Done { report_url: String, badge_url: String, passed: bool },
@@ -70,13 +70,7 @@ fn run_pipeline_inner(tx: &Sender<Progress>) -> anyhow::Result<()> {
     let dispatch_count = vulkan::stress::run(&ctx, STRESS_TEST_DURATION, |elapsed| {
         if let Ok(sample_telemetry) = nvml.read_primary_gpu() {
             let sample = sample_from_telemetry(elapsed, &sample_telemetry);
-            let _ = tx.send(Progress::StressSample(TelemetrySample {
-                elapsed_ms: sample.elapsed_ms,
-                temperature_c: sample.temperature_c,
-                power_draw_mw: sample.power_draw_mw,
-                graphics_clock_mhz: sample.graphics_clock_mhz,
-                memory_clock_mhz: sample.memory_clock_mhz,
-            }));
+            let _ = tx.send(Progress::StressSample(sample.clone()));
             telemetry_series.push(sample);
         }
     })?;
@@ -89,8 +83,12 @@ fn run_pipeline_inner(tx: &Sender<Progress>) -> anyhow::Result<()> {
         telemetry.vram_total_bytes,
         VRAM_TEST_FRACTION,
         VRAM_TEST_DURATION,
-        |passes_run, total_errors| {
-            let _ = tx.send(Progress::VramProgress { passes_run, total_errors });
+        |passes_run, total_errors, elapsed| {
+            let _ = tx.send(Progress::VramProgress {
+                passes_run,
+                total_errors,
+                elapsed_ms: elapsed.as_millis() as u64,
+            });
         },
     )?;
     tx.send(Progress::VramDone {
@@ -129,6 +127,7 @@ pub struct GpuCertApp {
     stress_dispatch_count: Option<u32>,
     vram_passes: u32,
     vram_errors: u64,
+    elapsed_ms: u64,
     result: Option<Result<(String, String, bool), String>>,
 }
 
@@ -141,60 +140,65 @@ enum Phase {
     Done,
 }
 
-// Design tokens. The window is styled as a small diagnostic instrument, not
-// consumer app chrome: a graphite "chassis" holding a recessed "screen"
-// that only live test data lives inside, in an amber-phosphor monospace —
-// the CRT-multimeter/oscilloscope vernacular real hardware test tools use.
-// Chassis vs. screen is a real structural distinction (static chrome vs.
-// live readings), not decoration. Pass/fail colors are reserved strictly
-// for verdict state and never used decoratively elsewhere.
+// Design tokens, taken directly from the anurfi website/board palette
+// (same --bg/--fg/--muted/--accent values as anurfi.net and anurfi-board's
+// globals.css) rather than inventing a separate visual identity for this
+// tool. Pass/fail are the one addition: muted, warm-leaning colors chosen
+// to sit inside this palette rather than the generic saturated
+// green/red — status colors, used nowhere else.
 mod tokens {
     use egui::Color32;
-    pub const CHASSIS_BG: Color32 = Color32::from_rgb(0x1C, 0x1E, 0x22);
-    pub const CHASSIS_INK: Color32 = Color32::from_rgb(0xC7, 0xCB, 0xD1);
-    pub const CHASSIS_INK_DIM: Color32 = Color32::from_rgb(0x7D, 0x82, 0x8A);
-    pub const SCREEN_BG: Color32 = Color32::from_rgb(0x14, 0x11, 0x0D);
-    pub const PHOSPHOR: Color32 = Color32::from_rgb(0xE8, 0xA3, 0x3D);
-    pub const PHOSPHOR_DIM: Color32 = Color32::from_rgb(0x8A, 0x67, 0x35);
-    pub const PASS: Color32 = Color32::from_rgb(0x4C, 0xAF, 0x7D);
-    pub const FAIL: Color32 = Color32::from_rgb(0xD6, 0x60, 0x4D);
-    pub const HAIRLINE: Color32 = Color32::from_rgb(0x33, 0x36, 0x3C);
+    pub const BG: Color32 = Color32::from_rgb(0x14, 0x12, 0x0F);
+    pub const SURFACE: Color32 = Color32::from_rgb(0x1A, 0x18, 0x14);
+    pub const INK: Color32 = Color32::from_rgb(0xF2, 0xEF, 0xE8);
+    pub const MUTED: Color32 = Color32::from_rgb(0x8A, 0x85, 0x78);
+    pub const MUTED_2: Color32 = Color32::from_rgb(0x6B, 0x66, 0x58);
+    pub const LINE: Color32 = Color32::from_rgb(0x2A, 0x28, 0x25);
+    pub const ACCENT: Color32 = Color32::from_rgb(0xB5, 0x50, 0x1F);
+    pub const PASS: Color32 = Color32::from_rgb(0x7A, 0x9B, 0x6E);
+    pub const FAIL: Color32 = Color32::from_rgb(0xB2, 0x3B, 0x32);
 }
 
-/// Set once at startup: dark chassis colors as egui's base Visuals, so
-/// every default-styled widget (labels, separators) already matches
-/// without per-widget overrides.
+/// Set once at startup: anurfi's palette as egui's base Visuals, so every
+/// default-styled widget already matches without per-widget overrides.
 fn configure_style(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = tokens::CHASSIS_BG;
-    visuals.override_text_color = Some(tokens::CHASSIS_INK);
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, tokens::HAIRLINE);
-    visuals.hyperlink_color = tokens::PHOSPHOR;
+    visuals.panel_fill = tokens::BG;
+    visuals.override_text_color = Some(tokens::INK);
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, tokens::LINE);
+    visuals.hyperlink_color = tokens::ACCENT;
+    visuals.selection.bg_fill = tokens::ACCENT;
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
-    style.spacing.item_spacing = egui::vec2(6.0, 8.0);
+    style.spacing.item_spacing = egui::vec2(6.0, 10.0);
     ctx.set_style_of(egui::Theme::Dark, style);
 }
 
-/// A recessed instrument screen: darker than the chassis, with a hairline
-/// top edge and a faint bottom highlight to read as inset rather than
-/// flush with the surrounding panel. Everything painted inside is live
-/// test data, in phosphor-colored monospace.
-fn screen_frame() -> egui::Frame {
-    egui::Frame::new()
-        .fill(tokens::SCREEN_BG)
-        .stroke(egui::Stroke::new(1.0, tokens::HAIRLINE))
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(12, 10))
+/// Small uppercase letter-spaced label — the same "eyebrow" treatment
+/// anurfi's own site/board use for section labels (see .eyebrow in
+/// anurfi-board/app/globals.css), reused here instead of inventing a new
+/// label style.
+fn eyebrow(text: impl Into<String>) -> egui::RichText {
+    egui::RichText::new(text).color(tokens::MUTED).size(11.0).extra_letter_spacing(0.6)
 }
 
-fn phosphor(text: impl Into<String>) -> egui::RichText {
-    egui::RichText::new(text).monospace().color(tokens::PHOSPHOR)
+/// A concise key/value row: muted label on the left, tabular-monospace
+/// value on the right — monospace here only because these are numbers that
+/// need to line up as they update, the same reasoning anurfi-board's own
+/// `.tabular` utility exists for, not a leftover "instrument" aesthetic.
+fn info_row(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(tokens::MUTED).size(12.5));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(value).monospace().color(tokens::INK).size(12.5));
+        });
+    });
 }
 
-fn phosphor_dim(text: impl Into<String>) -> egui::RichText {
-    egui::RichText::new(text).monospace().color(tokens::PHOSPHOR_DIM).size(11.0)
+fn format_mmss(ms: u64) -> String {
+    let total_secs = ms / 1000;
+    format!("{}:{:02}", total_secs / 60, total_secs % 60)
 }
 
 impl GpuCertApp {
@@ -210,6 +214,7 @@ impl GpuCertApp {
             stress_dispatch_count: None,
             vram_passes: 0,
             vram_errors: 0,
+            elapsed_ms: 0,
             result: None,
         }
     }
@@ -223,13 +228,23 @@ impl GpuCertApp {
                 }
                 Progress::Fingerprint(hash) => self.fingerprint = Some(hash),
                 Progress::VulkanDevice => {}
-                Progress::StressStarted => self.phase = Phase::Stressing,
-                Progress::StressSample(sample) => self.latest_sample = Some(sample),
+                Progress::StressStarted => {
+                    self.phase = Phase::Stressing;
+                    self.elapsed_ms = 0;
+                }
+                Progress::StressSample(sample) => {
+                    self.elapsed_ms = sample.elapsed_ms;
+                    self.latest_sample = Some(sample);
+                }
                 Progress::StressDone { dispatch_count } => self.stress_dispatch_count = Some(dispatch_count),
-                Progress::VramStarted => self.phase = Phase::TestingVram,
-                Progress::VramProgress { passes_run, total_errors } => {
+                Progress::VramStarted => {
+                    self.phase = Phase::TestingVram;
+                    self.elapsed_ms = 0;
+                }
+                Progress::VramProgress { passes_run, total_errors, elapsed_ms } => {
                     self.vram_passes = passes_run;
                     self.vram_errors = total_errors;
+                    self.elapsed_ms = elapsed_ms;
                 }
                 Progress::VramDone { passes_run, total_errors } => {
                     self.vram_passes = passes_run;
@@ -257,90 +272,118 @@ impl eframe::App for GpuCertApp {
         ui.ctx().request_repaint_after(Duration::from_millis(200));
 
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.add_space(10.0);
+            ui.add_space(14.0);
             ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                draw_gpu_icon(ui.painter(), rect);
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+                draw_icon(ui.painter(), rect);
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new("GPU CERT")
-                        .color(tokens::CHASSIS_INK)
-                        .size(15.0)
+                        .color(tokens::INK)
+                        .size(14.0)
                         .strong()
-                        .extra_letter_spacing(2.0),
+                        .extra_letter_spacing(1.2),
                 );
             });
-            ui.add_space(10.0);
+            ui.add_space(18.0);
 
-            // Chassis-level status line: always visible, always plain
-            // proportional type, never phosphor — this is the app talking,
-            // not a reading off the instrument.
-            ui.label(
-                egui::RichText::new(match self.phase {
-                    Phase::ReadingGpu => "Reading GPU info",
-                    Phase::Stressing => "Running stress test",
-                    Phase::TestingVram => "Testing VRAM",
-                    Phase::Submitting => "Submitting report",
-                    Phase::Done => "Done",
-                })
-                .color(tokens::CHASSIS_INK_DIM)
-                .size(12.0),
-            );
-            ui.add_space(8.0);
+            ui.label(eyebrow(match self.phase {
+                Phase::ReadingGpu => "Reading device",
+                Phase::Stressing => "Stress test",
+                Phase::TestingVram => "VRAM test",
+                Phase::Submitting => "Submitting",
+                Phase::Done => "Done",
+            }));
+            ui.add_space(4.0);
+            if let Some(name) = &self.device_name {
+                ui.label(
+                    egui::RichText::new(name)
+                        .color(tokens::INK)
+                        .size(15.0)
+                        .strong(),
+                );
+            }
 
-            // The screen: every value painted in here is a live reading,
-            // phosphor monospace, nothing decorative.
-            screen_frame().show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                match self.phase {
-                    Phase::ReadingGpu => {
-                        ui.label(phosphor_dim("awaiting device…"));
-                    }
-                    Phase::Stressing => {
-                        if let Some(name) = &self.device_name {
-                            ui.label(phosphor(format!("{name} · {} MB", self.vram_mb.unwrap_or(0))));
+            let (total_duration, show_progress) = match self.phase {
+                Phase::Stressing => (STRESS_TEST_DURATION, true),
+                Phase::TestingVram => (VRAM_TEST_DURATION, true),
+                _ => (Duration::ZERO, false),
+            };
+            if show_progress {
+                ui.add_space(10.0);
+                let fraction = (self.elapsed_ms as f32 / total_duration.as_millis() as f32).min(1.0);
+                ui.add(egui::ProgressBar::new(fraction).fill(tokens::ACCENT).desired_height(4.0).corner_radius(2.0));
+                ui.add_space(3.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} / {}",
+                        format_mmss(self.elapsed_ms),
+                        format_mmss(total_duration.as_millis() as u64)
+                    ))
+                    .color(tokens::MUTED_2)
+                    .size(11.0),
+                );
+            }
+
+            ui.add_space(16.0);
+            egui::Frame::new()
+                .fill(tokens::SURFACE)
+                .stroke(egui::Stroke::new(1.0, tokens::LINE))
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::symmetric(14, 12))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    match self.phase {
+                        Phase::ReadingGpu => {
+                            ui.label(egui::RichText::new("Waiting for device…").color(tokens::MUTED));
                         }
-                        ui.add_space(4.0);
-                        if let Some(sample) = &self.latest_sample {
-                            ui.label(phosphor(format!(
-                                "{:>3}°C   {:>4} W   {:>4} MHz core   {:>4} MHz mem",
-                                sample.temperature_c,
-                                sample.power_draw_mw / 1000,
-                                sample.graphics_clock_mhz,
-                                sample.memory_clock_mhz,
-                            )));
-                        } else {
-                            ui.label(phosphor_dim("warming up…"));
+                        Phase::Stressing => {
+                            if let Some(sample) = &self.latest_sample {
+                                info_row(ui, "Temp", format!("{}°C", sample.temperature_c));
+                                info_row(ui, "Load", format!("{}%", sample.utilization_pct));
+                                info_row(ui, "Power", format!("{} W", sample.power_draw_mw / 1000));
+                                info_row(ui, "Core clock", format!("{} MHz", sample.graphics_clock_mhz));
+                                info_row(ui, "Memory clock", format!("{} MHz", sample.memory_clock_mhz));
+                            } else {
+                                ui.label(egui::RichText::new("Warming up…").color(tokens::MUTED));
+                            }
+                        }
+                        Phase::TestingVram => {
+                            info_row(ui, "VRAM tested", format!("{} MB", self.vram_mb.unwrap_or(0)));
+                            info_row(ui, "Passes", self.vram_passes.to_string());
+                            info_row(
+                                ui,
+                                "Errors",
+                                egui::RichText::new(self.vram_errors.to_string())
+                                    .color(if self.vram_errors > 0 { tokens::FAIL } else { tokens::INK })
+                                    .monospace()
+                                    .text(),
+                            );
+                        }
+                        Phase::Submitting => {
+                            ui.label(egui::RichText::new("Uploading results…").color(tokens::MUTED));
+                        }
+                        Phase::Done => {
+                            if let Some(dispatch_count) = self.stress_dispatch_count {
+                                info_row(ui, "Stress dispatches", dispatch_count.to_string());
+                            }
+                            info_row(ui, "VRAM passes", self.vram_passes.to_string());
+                            info_row(ui, "VRAM errors", self.vram_errors.to_string());
                         }
                     }
-                    Phase::TestingVram => {
-                        if let Some(name) = &self.device_name {
-                            ui.label(phosphor(format!("{name} · {} MB", self.vram_mb.unwrap_or(0))));
-                        }
-                        ui.add_space(4.0);
-                        ui.label(phosphor(format!("passes {:>3}   errors {}", self.vram_passes, self.vram_errors)));
+                    if let Some(fp) = &self.fingerprint {
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(format!("fingerprint {fp}"))
+                                .monospace()
+                                .color(tokens::MUTED_2)
+                                .size(10.5),
+                        );
                     }
-                    Phase::Submitting => {
-                        ui.label(phosphor_dim("uploading…"));
-                    }
-                    Phase::Done => {
-                        if let Some(dispatch_count) = self.stress_dispatch_count {
-                            ui.label(phosphor(format!("stress: {dispatch_count} dispatches")));
-                        }
-                        ui.label(phosphor(format!(
-                            "vram: {} passes, {} errors",
-                            self.vram_passes, self.vram_errors
-                        )));
-                    }
-                }
-                if let Some(fp) = &self.fingerprint {
-                    ui.add_space(4.0);
-                    ui.label(phosphor_dim(format!("fp {fp}")));
-                }
-            });
+                });
 
             if self.phase == Phase::Done {
-                ui.add_space(14.0);
+                ui.add_space(16.0);
                 match &self.result {
                     Some(Ok((report_url, _badge_url, passed))) => {
                         let (text, color) = if *passed {
@@ -349,25 +392,14 @@ impl eframe::App for GpuCertApp {
                             ("FAIL", tokens::FAIL)
                         };
                         ui.horizontal(|ui| {
-                            egui::Frame::new()
-                                .fill(color)
-                                .corner_radius(3.0)
-                                .inner_margin(egui::Margin::symmetric(10, 4))
-                                .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new(text)
-                                            .color(tokens::CHASSIS_BG)
-                                            .strong()
-                                            .size(15.0),
-                                    );
-                                });
+                            ui.label(egui::RichText::new(text).color(color).strong().size(16.0));
+                            ui.add_space(10.0);
+                            ui.hyperlink_to("View report >", report_url);
                         });
-                        ui.add_space(8.0);
-                        ui.hyperlink_to("View report >", report_url);
                     }
                     Some(Err(err)) => {
-                        ui.colored_label(tokens::FAIL, "Could not complete test");
-                        ui.label(egui::RichText::new(err).color(tokens::CHASSIS_INK_DIM).size(11.0));
+                        ui.label(egui::RichText::new("Could not complete test").color(tokens::FAIL).strong());
+                        ui.label(egui::RichText::new(err).color(tokens::MUTED).size(11.0));
                     }
                     None => {}
                 }
@@ -376,36 +408,26 @@ impl eframe::App for GpuCertApp {
     }
 }
 
-/// Deliberately generic, not device-specific art: a rounded card body with
-/// two fan hubs. Drawn with egui's painter instead of an embedded image
-/// asset so there's no image file to source, license, or keep in sync with
-/// icon-refresh requests — just shapes. Colored to match the chassis
-/// palette rather than standing apart from it.
-fn draw_gpu_icon(painter: &egui::Painter, rect: egui::Rect) {
-    let card_color = tokens::CHASSIS_INK_DIM;
-    let fan_color = tokens::PHOSPHOR;
+/// GPU Cert's own mark, not a reuse of the anurfi "A" logo — this is a
+/// different product domain, so it gets its own identity even though it
+/// shares anurfi's palette. Drawn in the same visual language as the
+/// anurfi mark though: a single bold stroke, rounded caps, one accent
+/// color, no fill, no gradient (see anurfi-board/components/Logo.tsx).
+/// Subject here is a chip/die outline with a couple of lead pins, read as
+/// "hardware", the way anurfi's mark reads as an "A" — both abstract
+/// geometry, not illustration.
+fn draw_icon(painter: &egui::Painter, rect: egui::Rect) {
+    let stroke_width = rect.width() * 0.11;
+    let stroke = egui::Stroke::new(stroke_width, tokens::ACCENT);
+    let inset = rect.width() * 0.22;
+    let body = egui::Rect::from_min_max(rect.min + egui::vec2(inset, inset), rect.max - egui::vec2(inset, inset));
 
-    let card = egui::Rect::from_min_size(
-        rect.min + egui::vec2(2.0, rect.height() * 0.15),
-        egui::vec2(rect.width() - 4.0, rect.height() * 0.6),
-    );
-    painter.rect_filled(card, 6.0, card_color);
+    painter.add(egui::Shape::rect_stroke(body, rect.width() * 0.08, stroke, egui::StrokeKind::Middle));
 
-    let fan_radius = rect.height() * 0.13;
-    let fan_y = card.center().y;
-    for fan_x_frac in [0.32, 0.68] {
-        let center = egui::pos2(rect.min.x + rect.width() * fan_x_frac, fan_y);
-        painter.circle_filled(center, fan_radius, fan_color);
-    }
-
-    // A couple of I/O bracket notches at the bottom edge read as "this is a
-    // card", not just a rounded rectangle.
-    let bracket_y = rect.max.y - rect.height() * 0.08;
-    for x_frac in [0.15, 0.25] {
-        let x = rect.min.x + rect.width() * x_frac;
-        painter.line_segment(
-            [egui::pos2(x, bracket_y), egui::pos2(x, rect.max.y)],
-            egui::Stroke::new(2.0, egui::Color32::from_gray(120)),
-        );
+    let pin_len = inset * 0.85;
+    for frac in [0.32, 0.68] {
+        let x = rect.min.x + rect.width() * frac;
+        painter.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.min.y + pin_len)], stroke);
+        painter.line_segment([egui::pos2(x, rect.max.y - pin_len), egui::pos2(x, rect.max.y)], stroke);
     }
 }

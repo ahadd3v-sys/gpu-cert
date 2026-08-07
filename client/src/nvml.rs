@@ -49,6 +49,12 @@ struct NvmlMemoryInfo {
 }
 
 #[repr(C)]
+struct NvmlUtilization {
+    gpu: c_uint,
+    memory: c_uint,
+}
+
+#[repr(C)]
 #[derive(Debug, Default, serde::Serialize)]
 pub struct GpuTelemetry {
     pub uuid: String,
@@ -60,6 +66,10 @@ pub struct GpuTelemetry {
     pub power_draw_mw: u32,
     pub graphics_clock_mhz: u32,
     pub memory_clock_mhz: u32,
+    /// GPU core utilization, 0-100. Not a stress-test result on its own —
+    /// it's what "load" means when the GUI shows a live reading during the
+    /// test — but it's a real NVML value, not a derived/guessed number.
+    pub utilization_pct: u32,
 }
 
 pub struct Nvml {
@@ -76,6 +86,7 @@ pub struct Nvml {
     device_get_temperature: Symbol<'static, unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> i32>,
     device_get_power_usage: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>,
     device_get_clock_info: Symbol<'static, unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> i32>,
+    device_get_utilization_rates: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> i32>,
 }
 
 // NVML_TEMPERATURE_GPU
@@ -123,6 +134,7 @@ impl Nvml {
             let device_get_temperature = sym!(b"nvmlDeviceGetTemperature\0", unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> i32);
             let device_get_power_usage = sym!(b"nvmlDeviceGetPowerUsage\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
             let device_get_clock_info = sym!(b"nvmlDeviceGetClockInfo\0", unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> i32);
+            let device_get_utilization_rates = sym!(b"nvmlDeviceGetUtilizationRates\0", unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> i32);
 
             let nvml = Nvml {
                 _lib: lib,
@@ -138,6 +150,7 @@ impl Nvml {
                 device_get_temperature,
                 device_get_power_usage,
                 device_get_clock_info,
+                device_get_utilization_rates,
             };
 
             let rc = (nvml.init_v2)();
@@ -192,6 +205,9 @@ impl Nvml {
             let mut mem_clock: c_uint = 0;
             check((self.device_get_clock_info)(device, NVML_CLOCK_MEM, &mut mem_clock))?;
 
+            let mut utilization = NvmlUtilization { gpu: 0, memory: 0 };
+            check((self.device_get_utilization_rates)(device, &mut utilization))?;
+
             Ok(GpuTelemetry {
                 uuid,
                 name,
@@ -206,6 +222,7 @@ impl Nvml {
                 power_draw_mw: power,
                 graphics_clock_mhz: gfx_clock,
                 memory_clock_mhz: mem_clock,
+                utilization_pct: utilization.gpu,
             })
         }
     }

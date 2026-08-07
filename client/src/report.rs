@@ -11,13 +11,14 @@ use crate::fingerprint::Fingerprint;
 use crate::nvml::GpuTelemetry;
 use crate::vulkan::vram_test::VramTestResult;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct TelemetrySample {
     pub elapsed_ms: u64,
     pub temperature_c: u32,
     pub power_draw_mw: u32,
     pub graphics_clock_mhz: u32,
     pub memory_clock_mhz: u32,
+    pub utilization_pct: u32,
 }
 
 #[derive(Serialize)]
@@ -114,5 +115,6 @@ pub fn sample_from_telemetry(elapsed: Duration, t: &GpuTelemetry) -> TelemetrySa
         power_draw_mw: t.power_draw_mw,
         graphics_clock_mhz: t.graphics_clock_mhz,
         memory_clock_mhz: t.memory_clock_mhz,
+        utilization_pct: t.utilization_pct,
     }
 }
