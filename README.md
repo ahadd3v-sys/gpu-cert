@@ -4,6 +4,15 @@
 (r/hardwareswap, Facebook Marketplace, OLX). Full scope: see the board doc and
 `hardware-verification-certificate-scope.md`.
 
+## Preview
+
+The report page (`backend/src/report-page.ts`) is styled as an actual
+certificate rather than a plain results screen — masthead, GPU spec table,
+verification protocol section, ink-stamp seal. Rendered PASS/FAIL previews
+(mock data, no live backend deployed yet): **https://claude.ai/code/artifact/89d5994a-7cae-46b6-b173-3e0f53daabcf**
+(private artifact tied to Ahad's claude.ai account — share it from the page's
+share menu if someone else needs the link).
+
 ## Product scope
 
 Scoped deliberately to the certificate use case, not a general diagnostic
@@ -27,15 +36,43 @@ itself is the trust signal, not the window's appearance.
 
 ## Layout
 
-- `client/` — Rust Windows console app. Reads NVML/ADL telemetry, runs a
-  Vulkan-based stress + VRAM pattern test, computes a hardware fingerprint,
-  and submits a signed report request to the backend.
+- `client/` — Rust Windows console app. Reads NVML/ADL telemetry, computes a
+  hardware fingerprint, runs three tests (compute stress, VRAM pattern,
+  render integrity — see below), checks PCIe link width, and submits a
+  signed report request to the backend.
 - `backend/` — Hono app on Vercel (Turso for storage). Accounts
   (signup/login, JWT session cookie), ingests reports from the exe
   (unauthenticated — the exe has no browser session), lets a logged-in
   viewer claim an unowned report to their account, serves the public
   `/r/:reportId` report page and shareable badge image, and a `/dashboard`
   listing a user's claimed reports.
+
+## Verification protocol
+
+Three tests, each documented and scored — see `backend/lib/certify.ts`
+(`computeVerdict`) for exactly what fails a card and why:
+
+- **Stress test** (`client/src/vulkan/stress.rs`) — sustained compute load
+  via a hand-written Vulkan kernel. Telemetry (temp, clocks) is scored by
+  `backend/lib/stress-analysis.ts` for over-temperature, failure to
+  thermally stabilize, and excessive/unstable clock throttling.
+- **VRAM pattern test** (`client/src/vulkan/vram_test.rs`) — bit-pattern
+  write/verify sweep across active VRAM (memtest_vulkan-derived). Any error
+  is a fail, full stop — this is the core "mining damage" detector.
+- **Render integrity test** (`client/src/vulkan/fur_test.rs`) — renders a
+  deterministic fullscreen fragment shader and checks a sampled pixel grid
+  against the CPU-recomputed expected output every frame. Catches
+  compute/rasterizer defects the other two tests can't see (neither of them
+  reads back or checks its own output). **Never run against real hardware
+  yet** — this dev environment can compile the Vulkan graphics-pipeline code
+  but not execute it.
+- **PCIe link width** (via NVML) — current vs. max-supported lane width; a
+  degraded link (bad slot/connector/riser) fails with a specific reason.
+
+All three sustained-load tests share a safety watchdog (`client/src/safety.rs`):
+any test aborts immediately if the GPU crosses 100°C rather than trusting a
+fixed duration to always be safe. An aborted-for-safety run is itself a
+certifiable finding (shown under "Why This Failed"), not a discarded one.
 
 ## Stack decisions
 
@@ -79,7 +116,14 @@ actually be verified here vs. what's still gated on real hardware:
   or Windows Vulkan ICD in this dev environment. `cargo check`/`cargo build`
   (native Linux target) and the shader→SPIR-V build step both pass, and the
   no-GPU error path was confirmed to fail cleanly, but none of the actual
-  hardware-facing code paths have run against real hardware.
+  hardware-facing code paths have run against real hardware. This applies
+  in full to `fur_test.rs`'s graphics pipeline (render pass, framebuffer,
+  readback) — it's the newest and most complex Vulkan code in the client,
+  and the least proven.
+- The 100°C safety-watchdog threshold (`safety.rs`) and the stress-telemetry
+  scoring thresholds (`stress-analysis.ts`) are both conservative estimates,
+  not calibrated against real GPU behavior — there's been no real hardware
+  run yet to validate them against.
 - **The exe download itself isn't hosted anywhere yet.** `pages.ts` points
   "Test your GPU" at a GitHub Releases URL
   (`ahadd3v-sys/gpu-cert/releases/latest/download/gpu-cert.exe`) that
