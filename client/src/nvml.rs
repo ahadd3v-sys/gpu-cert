@@ -221,7 +221,12 @@ impl Nvml {
                 power_draw_mw: power,
                 graphics_clock_mhz: gfx_clock,
                 memory_clock_mhz: mem_clock,
-                utilization_pct: utilization.gpu,
+                // Clamp defensively: NVML's `utilization.gpu` is documented
+                // as a 0-100 percentage, but glitchy drivers have been
+                // observed to return transient out-of-range values. This is
+                // a percentage and must never leave the client out of
+                // range, regardless of what the driver hands back.
+                utilization_pct: utilization.gpu.min(100),
             })
         }
     }

@@ -8,7 +8,16 @@ export const TelemetrySampleSchema = z.object({
   power_draw_mw: z.number().int().nonnegative(),
   graphics_clock_mhz: z.number().int().nonnegative(),
   memory_clock_mhz: z.number().int().nonnegative(),
-  utilization_pct: z.number().int().min(0).max(100),
+  // Clamped, not hard-validated: NVML on the client already clamps this to
+  // 0-100, but a `.max(100)` here would fail the *entire* telemetry_series
+  // array (safeParse validates atomically) over a single transient
+  // out-of-range reading from any client, discarding an otherwise-valid
+  // multi-minute test run. Coerce out-of-range values into range instead of
+  // rejecting the sample (or report) outright.
+  utilization_pct: z
+    .number()
+    .int()
+    .transform((v) => Math.min(100, Math.max(0, v))),
 });
 
 export const CertifyRequestSchema = z.object({

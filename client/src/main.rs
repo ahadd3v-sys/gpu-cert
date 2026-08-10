@@ -23,7 +23,39 @@ const VRAM_TEST_FRACTION: f64 = 0.85;
 // the (logged-in) website, so the download itself is the trust signal, not
 // this window's appearance. That let the client go back to being a plain
 // pipe of println!s instead of carrying eframe/egui.
-fn main() -> anyhow::Result<()> {
+//
+// Because it's a plain console app, double-clicking gpu-cert.exe from
+// Explorer runs it attached to a console window that Windows destroys the
+// instant the process exits — success or failure. Without an explicit pause,
+// any output (including error messages) flashes and vanishes before it can
+// be read. `main` stays a thin wrapper around `run` so every exit path
+// (early `?` returns, the happy path, and even a panic) goes through
+// `pause_before_exit` before the process actually terminates.
+fn main() {
+    let default_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_panic_hook(info);
+        pause_before_exit();
+    }));
+
+    let result = run();
+    if let Err(ref e) = result {
+        eprintln!("Error: {e:?}");
+    }
+    pause_before_exit();
+
+    if result.is_err() {
+        std::process::exit(1);
+    }
+}
+
+fn pause_before_exit() {
+    println!("\nPress Enter to close this window...");
+    let mut discard = String::new();
+    let _ = std::io::stdin().read_line(&mut discard);
+}
+
+fn run() -> anyhow::Result<()> {
     println!("gpu-cert v{} — hardware verification client", env!("CARGO_PKG_VERSION"));
 
     let nvml = nvml::Nvml::load().map_err(|e| {

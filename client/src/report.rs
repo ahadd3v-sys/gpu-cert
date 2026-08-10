@@ -115,6 +115,9 @@ pub fn sample_from_telemetry(elapsed: Duration, t: &GpuTelemetry) -> TelemetrySa
         power_draw_mw: t.power_draw_mw,
         graphics_clock_mhz: t.graphics_clock_mhz,
         memory_clock_mhz: t.memory_clock_mhz,
-        utilization_pct: t.utilization_pct,
+        // Re-clamp here too (nvml.rs already clamps at the read site): a
+        // percentage sample built into the report must never carry an
+        // out-of-range value regardless of how `t` was constructed.
+        utilization_pct: t.utilization_pct.min(100),
     }
 }
