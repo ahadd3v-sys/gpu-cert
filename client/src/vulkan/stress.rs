@@ -20,15 +20,25 @@ struct PushConstants {
     iterations: u32,
 }
 
+pub struct StressRunResult {
+    pub dispatch_count: u32,
+    /// True if the caller's `on_tick` returned false (its own temperature
+    /// watchdog tripped) and the loop stopped before `duration` elapsed
+    /// rather than let the card keep taking sustained load.
+    pub aborted_for_safety: bool,
+}
+
 /// Runs stress dispatches back to back until `duration` elapses, invoking
 /// `on_tick` after every dispatch so the caller can sample GPU telemetry
 /// mid-run — that per-tick sampling is what produces the thermal/clock
 /// time-series the report is actually judged on, not just a pass/fail.
+/// `on_tick` returns whether to keep going: the caller's safety watchdog
+/// (see `safety.rs`) can return `false` to abort the run early.
 pub fn run(
     ctx: &VulkanContext,
     duration: Duration,
-    mut on_tick: impl FnMut(Duration),
-) -> anyhow::Result<u32> {
+    mut on_tick: impl FnMut(Duration) -> bool,
+) -> anyhow::Result<StressRunResult> {
     let buffer_size = (ELEMENT_COUNT as u64) * 4;
     let data_buffer = GpuBuffer::new(
         ctx,
@@ -55,12 +65,16 @@ pub fn run(
 
     let started = Instant::now();
     let mut dispatch_count = 0u32;
+    let mut aborted_for_safety = false;
 
     let result = (|| -> anyhow::Result<()> {
         while started.elapsed() < duration {
             kernel.dispatch(ctx, &[&data_buffer], push_bytes, workgroups)?;
             dispatch_count += 1;
-            on_tick(started.elapsed());
+            if !on_tick(started.elapsed()) {
+                aborted_for_safety = true;
+                break;
+            }
         }
         Ok(())
     })();
@@ -69,5 +83,5 @@ pub fn run(
     data_buffer.destroy(ctx);
     result?;
 
-    Ok(dispatch_count)
+    Ok(StressRunResult { dispatch_count, aborted_for_safety })
 }

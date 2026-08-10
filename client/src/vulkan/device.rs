@@ -45,13 +45,21 @@ impl VulkanContext {
                 .to_string_lossy()
                 .into_owned();
 
+            // GRAPHICS, not just COMPUTE: the fur render test (graphics
+            // pipeline correctness/display-output check) needs a
+            // graphics-capable queue too. Every consumer Nvidia/AMD GPU
+            // exposes at least one queue family supporting both together —
+            // async-compute-only families are additional, not a
+            // replacement — so requiring both here doesn't lose any real
+            // hardware, it just rules out a queue family this client
+            // couldn't fully use anyway.
             let queue_families = instance.get_physical_device_queue_family_properties(physical_device);
             let queue_family_index = queue_families
                 .iter()
                 .enumerate()
-                .find(|(_, qf)| qf.queue_flags.contains(vk::QueueFlags::COMPUTE))
+                .find(|(_, qf)| qf.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE))
                 .map(|(i, _)| i as u32)
-                .ok_or_else(|| anyhow::anyhow!("no compute-capable queue family found"))?;
+                .ok_or_else(|| anyhow::anyhow!("no graphics+compute-capable queue family found"))?;
 
             let queue_priorities = [1.0f32];
             let queue_info = vk::DeviceQueueCreateInfo::default()

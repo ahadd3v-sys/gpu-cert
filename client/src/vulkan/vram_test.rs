@@ -30,6 +30,9 @@ pub struct VramTestResult {
     pub total_errors: u64,
     pub bytes_tested: u64,
     pub duration: Duration,
+    /// True if `on_pass`'s temperature watchdog tripped and the loop
+    /// stopped before `min_duration` elapsed — see safety.rs.
+    pub aborted_for_safety: bool,
 }
 
 /// Runs fill/verify passes against a DEVICE_LOCAL buffer sized to
@@ -47,7 +50,7 @@ pub fn run(
     vram_total_bytes: u64,
     test_fraction: f64,
     min_duration: Duration,
-    mut on_pass: impl FnMut(u32, u64, Duration),
+    mut on_pass: impl FnMut(u32, u64, Duration) -> bool,
 ) -> anyhow::Result<VramTestResult> {
     let element_count = ((vram_total_bytes as f64 * test_fraction) / 4.0) as u32;
     let buffer_size = (element_count as u64) * 4;
@@ -76,6 +79,7 @@ pub fn run(
     let started = Instant::now();
     let mut passes_run = 0u32;
     let mut total_errors = 0u64;
+    let mut aborted_for_safety = false;
 
     let result = (|| -> anyhow::Result<()> {
         while started.elapsed() < min_duration {
@@ -91,7 +95,10 @@ pub fn run(
 
             total_errors += read_error_counter(ctx, &error_buffer)? as u64;
             passes_run += 1;
-            on_pass(passes_run, total_errors, started.elapsed());
+            if !on_pass(passes_run, total_errors, started.elapsed()) {
+                aborted_for_safety = true;
+                break;
+            }
         }
         Ok(())
     })();
@@ -107,6 +114,7 @@ pub fn run(
         total_errors,
         bytes_tested: buffer_size,
         duration: started.elapsed(),
+        aborted_for_safety,
     })
 }
 

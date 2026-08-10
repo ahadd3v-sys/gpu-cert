@@ -39,19 +39,22 @@ app.post("/api/certify", async (c) => {
 
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const verdict = computeVerdict(req);
-  const signature = signReport(canonicalReportString(id, req, verdict, createdAt));
+  const result = computeVerdict(req);
+  const signature = signReport(canonicalReportString(id, req, result, createdAt));
 
   await db().execute({
     sql: `INSERT INTO reports (
       id, client_version, device_name,
       fingerprint_uuid, fingerprint_pci_device_id, fingerprint_vram_total_bytes,
       fingerprint_vbios_version, fingerprint_hash,
-      verdict,
+      pcie_link_width_current, pcie_link_width_max,
+      verdict, verdict_reasons,
       stress_dispatch_count, stress_duration_ms, stress_telemetry_series,
-      vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms,
+      stress_peak_temp_c, stress_thermally_stable, stress_clock_stability_pct, stress_aborted_for_safety,
+      vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety,
+      fur_frames_rendered, fur_duration_ms, fur_mismatches, fur_pixels_checked, fur_aborted_for_safety,
       signature, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       req.client_version,
@@ -61,14 +64,27 @@ app.post("/api/certify", async (c) => {
       req.fingerprint.vram_total_bytes,
       req.fingerprint.vbios_version,
       req.fingerprint.hash,
-      verdict,
+      req.pcie_link_width_current,
+      req.pcie_link_width_max,
+      result.verdict,
+      JSON.stringify(result.reasons),
       req.stress_test.dispatch_count,
       req.stress_test.duration_ms,
       JSON.stringify(req.stress_test.telemetry_series),
+      result.stressPeakTempC,
+      result.stressThermallyStable ? 1 : 0,
+      result.stressClockStabilityPct,
+      req.stress_test.aborted_for_safety ? 1 : 0,
       req.vram_test.passes_run,
       req.vram_test.total_errors,
       req.vram_test.bytes_tested,
       req.vram_test.duration_ms,
+      req.vram_test.aborted_for_safety ? 1 : 0,
+      req.fur_test.frames_rendered,
+      req.fur_test.duration_ms,
+      req.fur_test.mismatches,
+      req.fur_test.pixels_checked,
+      req.fur_test.aborted_for_safety ? 1 : 0,
       signature,
       createdAt,
     ],

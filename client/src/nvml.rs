@@ -70,6 +70,12 @@ pub struct GpuTelemetry {
     /// it's what "load" means when the GUI shows a live reading during the
     /// test — but it's a real NVML value, not a derived/guessed number.
     pub utilization_pct: u32,
+    /// Current vs. max-supported PCIe lane width (e.g. 16 vs 16, or 8 vs
+    /// 16 for a degraded link). A card stuck below its max width — bent
+    /// connector, bad slot, damaged pins, riser cable fault — is a real
+    /// resale-relevant defect that no compute/VRAM test would ever surface.
+    pub pcie_link_width_current: u32,
+    pub pcie_link_width_max: u32,
 }
 
 pub struct Nvml {
@@ -87,6 +93,8 @@ pub struct Nvml {
     device_get_power_usage: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>,
     device_get_clock_info: Symbol<'static, unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> i32>,
     device_get_utilization_rates: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> i32>,
+    device_get_curr_pcie_link_width: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>,
+    device_get_max_pcie_link_width: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>,
 }
 
 // NVML_TEMPERATURE_GPU
@@ -135,6 +143,8 @@ impl Nvml {
             let device_get_power_usage = sym!(b"nvmlDeviceGetPowerUsage\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
             let device_get_clock_info = sym!(b"nvmlDeviceGetClockInfo\0", unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> i32);
             let device_get_utilization_rates = sym!(b"nvmlDeviceGetUtilizationRates\0", unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> i32);
+            let device_get_curr_pcie_link_width = sym!(b"nvmlDeviceGetCurrPcieLinkWidth\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
+            let device_get_max_pcie_link_width = sym!(b"nvmlDeviceGetMaxPcieLinkWidth\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
 
             let nvml = Nvml {
                 _lib: lib,
@@ -151,6 +161,8 @@ impl Nvml {
                 device_get_power_usage,
                 device_get_clock_info,
                 device_get_utilization_rates,
+                device_get_curr_pcie_link_width,
+                device_get_max_pcie_link_width,
             };
 
             let rc = (nvml.init_v2)();
@@ -211,6 +223,12 @@ impl Nvml {
             let vbios_version =
                 self.read_string(device, &self.device_get_vbios, NVML_DEVICE_VBIOS_VERSION_BUFFER_SIZE)?;
 
+            let mut pcie_current: c_uint = 0;
+            check((self.device_get_curr_pcie_link_width)(device, &mut pcie_current))?;
+
+            let mut pcie_max: c_uint = 0;
+            check((self.device_get_max_pcie_link_width)(device, &mut pcie_max))?;
+
             Ok(GpuTelemetry {
                 uuid,
                 name,
@@ -227,6 +245,8 @@ impl Nvml {
                 // a percentage and must never leave the client out of
                 // range, regardless of what the driver hands back.
                 utilization_pct: utilization.gpu.min(100),
+                pcie_link_width_current: pcie_current,
+                pcie_link_width_max: pcie_max,
             })
         }
     }

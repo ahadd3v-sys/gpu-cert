@@ -6,6 +6,7 @@
 
 pub mod compute;
 pub mod device;
+pub mod fur_test;
 pub mod stress;
 pub mod vram_test;
 

@@ -2,13 +2,14 @@ mod adl;
 mod fingerprint;
 mod nvml;
 mod report;
+mod safety;
 mod vulkan;
 
 use std::io::Write;
 use std::time::{Duration, Instant};
 
 use fingerprint::Fingerprint;
-use report::{sample_from_telemetry, CertifyRequest, StressTestReport, VramTestReport};
+use report::{sample_from_telemetry, CertifyRequest, FurTestReport, StressTestReport, VramTestReport};
 use vulkan::VulkanContext;
 
 // Phase 1 durations. Not tunable via CLI yet — exposing knobs like this to
@@ -17,6 +18,10 @@ use vulkan::VulkanContext;
 const STRESS_TEST_DURATION: Duration = Duration::from_secs(5 * 60);
 const VRAM_TEST_DURATION: Duration = Duration::from_secs(10 * 60);
 const VRAM_TEST_FRACTION: f64 = 0.85;
+// Short relative to the other two: this is a correctness/display-output
+// check exercised under load, not a thermal soak — that's already covered
+// by the 5-minute compute stress test above.
+const FUR_TEST_DURATION: Duration = Duration::from_secs(45);
 
 // Console, not a GUI: the trust problem a GUI was meant to solve is now
 // handled upstream — you only get this exe by clicking "Test your GPU" on
@@ -76,27 +81,37 @@ fn run() -> anyhow::Result<()> {
     println!("Running stress test ({} min)...", STRESS_TEST_DURATION.as_secs() / 60);
     let mut telemetry_series = Vec::new();
     let stress_started = Instant::now();
-    let dispatch_count = vulkan::stress::run(&ctx, STRESS_TEST_DURATION, |elapsed| {
+    let stress_run = vulkan::stress::run(&ctx, STRESS_TEST_DURATION, |elapsed| {
         // Re-sampling telemetry every tick is deliberately cheap (a few
         // NVML calls) relative to the dispatch itself, so it doesn't skew
         // the load being measured.
-        if let Ok(sample_telemetry) = nvml.read_primary_gpu() {
-            let sample = sample_from_telemetry(elapsed, &sample_telemetry);
-            print_progress(&format!(
-                "  {:>3}s  {:>3}\u{b0}C  {:>3}% load  {:>4}W  {:>4}MHz core  {:>4}MHz mem",
-                elapsed.as_secs(),
-                sample.temperature_c,
-                sample.utilization_pct,
-                sample.power_draw_mw / 1000,
-                sample.graphics_clock_mhz,
-                sample.memory_clock_mhz,
-            ));
-            telemetry_series.push(sample);
+        match nvml.read_primary_gpu() {
+            Ok(sample_telemetry) => {
+                let sample = sample_from_telemetry(elapsed, &sample_telemetry);
+                print_progress(&format!(
+                    "  {:>3}s  {:>3}\u{b0}C  {:>3}% load  {:>4}W  {:>4}MHz core  {:>4}MHz mem",
+                    elapsed.as_secs(),
+                    sample.temperature_c,
+                    sample.utilization_pct,
+                    sample.power_draw_mw / 1000,
+                    sample.graphics_clock_mhz,
+                    sample.memory_clock_mhz,
+                ));
+                let unsafe_temp = safety::is_temp_unsafe(sample.temperature_c);
+                telemetry_series.push(sample);
+                if unsafe_temp {
+                    print_abort_warning(sample_telemetry.temperature_c);
+                }
+                !unsafe_temp
+            }
+            // A transient telemetry read failure shouldn't itself abort a
+            // real test — keep going rather than false-trip the watchdog.
+            Err(_) => true,
         }
     })?;
     println!();
     let stress_report: StressTestReport =
-        report::build_stress_report(telemetry_series, dispatch_count, stress_started.elapsed());
+        report::build_stress_report(telemetry_series, &stress_run, stress_started.elapsed());
     println!("Stress test complete: {} dispatches", stress_report.dispatch_count);
 
     println!("Running VRAM pattern test ({} min)...", VRAM_TEST_DURATION.as_secs() / 60);
@@ -112,6 +127,16 @@ fn run() -> anyhow::Result<()> {
                 total_errors,
                 elapsed.as_secs()
             ));
+            match nvml.read_primary_gpu() {
+                Ok(t) => {
+                    let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
+                    if unsafe_temp {
+                        print_abort_warning(t.temperature_c);
+                    }
+                    !unsafe_temp
+                }
+                Err(_) => true,
+            }
         },
     )?;
     println!();
@@ -123,12 +148,36 @@ fn run() -> anyhow::Result<()> {
         vram_report.bytes_tested / 1_048_576
     );
 
+    println!("Running render integrity test ({}s)...", FUR_TEST_DURATION.as_secs());
+    let fur_result = vulkan::fur_test::run(&ctx, FUR_TEST_DURATION, |elapsed| {
+        print_progress(&format!("  {:>3}s", elapsed.as_secs()));
+        match nvml.read_primary_gpu() {
+            Ok(t) => {
+                let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
+                if unsafe_temp {
+                    print_abort_warning(t.temperature_c);
+                }
+                !unsafe_temp
+            }
+            Err(_) => true,
+        }
+    })?;
+    println!();
+    let fur_report = FurTestReport::from_result(&fur_result);
+    println!(
+        "Render integrity test complete: {} frames, {}/{} sample pixels mismatched",
+        fur_report.frames_rendered, fur_report.mismatches, fur_report.pixels_checked
+    );
+
     let request = CertifyRequest {
         client_version: env!("CARGO_PKG_VERSION"),
         fingerprint,
         device_name: telemetry.name.clone(),
+        pcie_link_width_current: telemetry.pcie_link_width_current,
+        pcie_link_width_max: telemetry.pcie_link_width_max,
         stress_test: stress_report,
         vram_test: vram_report,
+        fur_test: fur_report,
     };
 
     println!("Submitting report...");
@@ -144,6 +193,18 @@ fn run() -> anyhow::Result<()> {
 fn print_progress(line: &str) {
     print!("\r{line}                    ");
     let _ = std::io::stdout().flush();
+}
+
+/// Printed once, right before a test loop aborts because the watchdog
+/// tripped — see safety.rs. Aborting is still followed by a normal report
+/// submission: an early stop for an unsafe temperature is itself a
+/// meaningful, certifiable finding, not a run to just discard.
+fn print_abort_warning(temp_c: u32) {
+    println!(
+        "\nStopping this test: GPU reached {temp_c}\u{b0}C, at or above the {}\u{b0}C safety limit. \
+         Continuing to load the card at this temperature isn't safe.",
+        safety::SAFETY_ABORT_TEMP_C
+    );
 }
 
 /// Opens the report page so the seller lands back on the site to see (and,

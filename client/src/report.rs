@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use crate::fingerprint::Fingerprint;
 use crate::nvml::GpuTelemetry;
+use crate::vulkan::fur_test::FurTestResult;
+use crate::vulkan::stress::StressRunResult;
 use crate::vulkan::vram_test::VramTestResult;
 
 #[derive(Clone, Serialize)]
@@ -26,8 +28,11 @@ pub struct CertifyRequest {
     pub client_version: &'static str,
     pub fingerprint: Fingerprint,
     pub device_name: String,
+    pub pcie_link_width_current: u32,
+    pub pcie_link_width_max: u32,
     pub stress_test: StressTestReport,
     pub vram_test: VramTestReport,
+    pub fur_test: FurTestReport,
 }
 
 #[derive(Serialize)]
@@ -35,6 +40,7 @@ pub struct StressTestReport {
     pub dispatch_count: u32,
     pub duration_ms: u64,
     pub telemetry_series: Vec<TelemetrySample>,
+    pub aborted_for_safety: bool,
 }
 
 #[derive(Serialize)]
@@ -43,6 +49,7 @@ pub struct VramTestReport {
     pub total_errors: u64,
     pub bytes_tested: u64,
     pub duration_ms: u64,
+    pub aborted_for_safety: bool,
 }
 
 impl VramTestReport {
@@ -52,6 +59,28 @@ impl VramTestReport {
             total_errors: r.total_errors,
             bytes_tested: r.bytes_tested,
             duration_ms: r.duration.as_millis() as u64,
+            aborted_for_safety: r.aborted_for_safety,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct FurTestReport {
+    pub frames_rendered: u32,
+    pub duration_ms: u64,
+    pub mismatches: u32,
+    pub pixels_checked: u32,
+    pub aborted_for_safety: bool,
+}
+
+impl FurTestReport {
+    pub fn from_result(r: &FurTestResult) -> Self {
+        FurTestReport {
+            frames_rendered: r.frames_rendered,
+            duration_ms: r.duration.as_millis() as u64,
+            mismatches: r.mismatches,
+            pixels_checked: r.pixels_checked,
+            aborted_for_safety: r.aborted_for_safety,
         }
     }
 }
@@ -95,13 +124,14 @@ pub fn submit(req: &CertifyRequest) -> anyhow::Result<CertifyResponse> {
 
 pub fn build_stress_report(
     telemetry_series: Vec<TelemetrySample>,
-    dispatch_count: u32,
+    run_result: &StressRunResult,
     duration: Duration,
 ) -> StressTestReport {
     StressTestReport {
-        dispatch_count,
+        dispatch_count: run_result.dispatch_count,
         duration_ms: duration.as_millis() as u64,
         telemetry_series,
+        aborted_for_safety: run_result.aborted_for_safety,
     }
 }
 

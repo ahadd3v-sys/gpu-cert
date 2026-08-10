@@ -37,14 +37,27 @@ CREATE TABLE IF NOT EXISTS reports (
   fingerprint_vram_total_bytes INTEGER NOT NULL,
   fingerprint_vbios_version TEXT NOT NULL,
   fingerprint_hash TEXT NOT NULL,
+  pcie_link_width_current INTEGER NOT NULL DEFAULT 0,
+  pcie_link_width_max INTEGER NOT NULL DEFAULT 0,
   verdict TEXT NOT NULL,
+  verdict_reasons TEXT NOT NULL DEFAULT '[]',
   stress_dispatch_count INTEGER NOT NULL,
   stress_duration_ms INTEGER NOT NULL,
   stress_telemetry_series TEXT NOT NULL,
+  stress_peak_temp_c INTEGER NOT NULL DEFAULT 0,
+  stress_thermally_stable INTEGER NOT NULL DEFAULT 1,
+  stress_clock_stability_pct REAL NOT NULL DEFAULT 0,
+  stress_aborted_for_safety INTEGER NOT NULL DEFAULT 0,
   vram_passes_run INTEGER NOT NULL,
   vram_total_errors INTEGER NOT NULL,
   vram_bytes_tested INTEGER NOT NULL,
   vram_duration_ms INTEGER NOT NULL,
+  vram_aborted_for_safety INTEGER NOT NULL DEFAULT 0,
+  fur_frames_rendered INTEGER NOT NULL DEFAULT 0,
+  fur_duration_ms INTEGER NOT NULL DEFAULT 0,
+  fur_mismatches INTEGER NOT NULL DEFAULT 0,
+  fur_pixels_checked INTEGER NOT NULL DEFAULT 0,
+  fur_aborted_for_safety INTEGER NOT NULL DEFAULT 0,
   signature TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -74,21 +87,37 @@ export interface ReportRow {
   fingerprint_vram_total_bytes: number;
   fingerprint_vbios_version: string;
   fingerprint_hash: string;
+  pcie_link_width_current: number;
+  pcie_link_width_max: number;
   verdict: string;
+  verdict_reasons: string;
   stress_dispatch_count: number;
   stress_duration_ms: number;
+  stress_peak_temp_c: number;
+  stress_thermally_stable: number;
+  stress_clock_stability_pct: number;
+  stress_aborted_for_safety: number;
   vram_passes_run: number;
   vram_total_errors: number;
   vram_bytes_tested: number;
   vram_duration_ms: number;
+  vram_aborted_for_safety: number;
+  fur_frames_rendered: number;
+  fur_duration_ms: number;
+  fur_mismatches: number;
+  fur_pixels_checked: number;
+  fur_aborted_for_safety: number;
   signature: string;
   created_at: string;
 }
 
 const REPORT_COLUMNS = `id, user_id, client_version, device_name, fingerprint_uuid, fingerprint_pci_device_id,
                  fingerprint_vram_total_bytes, fingerprint_vbios_version, fingerprint_hash,
-                 verdict, stress_dispatch_count, stress_duration_ms,
-                 vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms,
+                 pcie_link_width_current, pcie_link_width_max,
+                 verdict, verdict_reasons, stress_dispatch_count, stress_duration_ms,
+                 stress_peak_temp_c, stress_thermally_stable, stress_clock_stability_pct, stress_aborted_for_safety,
+                 vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety,
+                 fur_frames_rendered, fur_duration_ms, fur_mismatches, fur_pixels_checked, fur_aborted_for_safety,
                  signature, created_at`;
 
 export async function getReportById(id: string): Promise<ReportRow | null> {
