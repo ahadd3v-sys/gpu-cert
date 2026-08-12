@@ -258,7 +258,7 @@ impl Nvml {
         buf_size: usize,
     ) -> anyhow::Result<String> {
         let mut buf = vec![0u8; buf_size];
-        check(f(device, buf.as_mut_ptr() as *mut c_char, buf_size as c_uint))?;
+        check(unsafe { f(device, buf.as_mut_ptr() as *mut c_char, buf_size as c_uint) })?;
         Ok(CStr::from_bytes_until_nul(&buf)
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default())

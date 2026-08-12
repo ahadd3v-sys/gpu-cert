@@ -174,7 +174,7 @@ extern "C" fn adl_main_memory_alloc(size: c_int) -> *mut c_void {
 // allocation callback ADL requires but never calls at high frequency.
 unsafe fn libc_alloc(size: usize) -> *mut c_void {
     let layout = std::alloc::Layout::from_size_align(size.max(1), 16).unwrap();
-    std::alloc::alloc(layout) as *mut c_void
+    unsafe { std::alloc::alloc(layout) as *mut c_void }
 }
 
 fn cstr_field(buf: &[c_char]) -> String {
@@ -198,9 +198,6 @@ pub struct Adl {
     main_control_destroy: Symbol<'static, unsafe extern "C" fn(AdlContextHandle) -> c_int>,
     adapter_number_of_adapters_get: Symbol<'static, unsafe extern "C" fn(AdlContextHandle, *mut c_int) -> c_int>,
     adapter_adapter_info_get: Symbol<'static, unsafe extern "C" fn(AdlContextHandle, *mut AdapterInfo, c_int) -> c_int>,
-    // adapter_active_get is only needed once, during `load`'s adapter
-    // selection — not stored, unlike the other symbols here which are
-    // re-used on every `read_primary_gpu` call.
     adapter_memory_info2_get: Symbol<'static, unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlMemoryInfo2) -> c_int>,
     // Optional, not required: not every driver version exports this ADL2
     // wrapper (confirmed missing on at least one real RX 6600 system), and
@@ -214,9 +211,9 @@ pub struct Adl {
 
 impl Adl {
     /// Loads atiadlxx.dll, creates an ADL2 context, and picks the first
-    /// active AMD adapter. Returns an error (not a panic) if there's no AMD
-    /// driver or no active AMD adapter — matching `Nvml::load`, an AMD card
-    /// is not a precondition for running the client, only for this path.
+    /// present AMD adapter. Returns an error (not a panic) if there's no AMD
+    /// driver or no AMD adapter — matching `Nvml::load`, an AMD card is not
+    /// a precondition for running the client, only for this path.
     pub fn load() -> anyhow::Result<Self> {
         unsafe {
             let lib = Library::new(ADL_LIB_NAME)
@@ -252,10 +249,6 @@ impl Adl {
             let adapter_adapter_info_get = sym!(
                 b"ADL2_Adapter_AdapterInfo_Get\0",
                 unsafe extern "C" fn(AdlContextHandle, *mut AdapterInfo, c_int) -> c_int
-            );
-            let adapter_active_get = sym!(
-                b"ADL2_Adapter_Active_Get\0",
-                unsafe extern "C" fn(AdlContextHandle, c_int, *mut c_int) -> c_int
             );
             let adapter_memory_info2_get = sym!(
                 b"ADL2_Adapter_MemoryInfo2_Get\0",
@@ -297,18 +290,24 @@ impl Adl {
                 "ADL2_Adapter_AdapterInfo_Get",
             )?;
 
+            // Deliberately NOT gated on ADL_Adapter_Active_Get: "active"
+            // there tracks display-output/Eyefinity topology state, not
+            // whether the ASIC itself is present and queryable — a
+            // perfectly normal single-monitor desktop card can read back
+            // inactive depending on which adapter entry ADL considers to
+            // own the active display path. GPU-Z and similar tools don't
+            // gate sensor reads on it either; presence is enough.
             let mut chosen: Option<c_int> = None;
             for info in &infos {
-                if info.vendor_id != AMD_VENDOR_ID || info.present == 0 {
-                    continue;
-                }
-                let mut active: c_int = 0;
-                if (adapter_active_get)(context, info.adapter_index, &mut active) != ADL_OK {
-                    continue;
-                }
-                if active != 0 {
+                println!(
+                    "  ADL adapter {}: vendor=0x{:04x} present={} name={:?}",
+                    info.adapter_index,
+                    info.vendor_id,
+                    info.present,
+                    cstr_field(&info.adapter_name),
+                );
+                if info.vendor_id == AMD_VENDOR_ID && info.present != 0 && chosen.is_none() {
                     chosen = Some(info.adapter_index);
-                    break;
                 }
             }
 
@@ -316,7 +315,9 @@ impl Adl {
                 Some(idx) => idx,
                 None => {
                     let _ = main_control_destroy(context);
-                    anyhow::bail!("no active AMD GPU found");
+                    anyhow::bail!(
+                        "no AMD GPU found among {count} ADL adapter(s) — see the adapter list printed above"
+                    );
                 }
             };
 
