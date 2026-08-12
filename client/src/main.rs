@@ -10,8 +10,55 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use fingerprint::Fingerprint;
+use nvml::GpuTelemetry;
 use report::{sample_from_telemetry, CertifyRequest, FurTestReport, StressTestReport, VramTestReport};
 use vulkan::VulkanContext;
+
+/// Unifies the NVML and ADL backends behind one `read_primary_gpu` so the
+/// rest of `run()` — three test loops that each re-sample telemetry every
+/// tick — doesn't need to know which vendor's card it's running against.
+enum GpuBackend {
+    Nvml(nvml::Nvml),
+    #[cfg(target_os = "windows")]
+    Adl(adl::Adl),
+}
+
+impl GpuBackend {
+    fn read_primary_gpu(&self) -> anyhow::Result<GpuTelemetry> {
+        match self {
+            GpuBackend::Nvml(n) => n.read_primary_gpu(),
+            #[cfg(target_os = "windows")]
+            GpuBackend::Adl(a) => a.read_primary_gpu(),
+        }
+    }
+}
+
+/// Tries NVIDIA first, then AMD — not a preference ranking, just an order.
+/// A machine only has one or the other in practice, so whichever loads
+/// first is used and the other is never touched.
+fn load_gpu_backend() -> anyhow::Result<GpuBackend> {
+    let nvml_err = match nvml::Nvml::load() {
+        Ok(n) => return Ok(GpuBackend::Nvml(n)),
+        Err(e) => e,
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        match adl::Adl::load() {
+            Ok(a) => return Ok(GpuBackend::Adl(a)),
+            Err(adl_err) => {
+                return Err(anyhow::anyhow!(
+                    "no supported GPU found.\n  NVIDIA (NVML): {nvml_err}\n  AMD (ADL): {adl_err}"
+                ));
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(anyhow::anyhow!("no supported GPU found (NVML load failed: {nvml_err}). AMD support is Windows-only."))
+    }
+}
 
 // Phase 1 durations. Not tunable via CLI yet — exposing knobs like this to
 // end users (vs. keeping the test fixed-length for report comparability) is
@@ -70,13 +117,8 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let nvml = nvml::Nvml::load().map_err(|e| {
-        anyhow::anyhow!(
-            "no supported GPU found (NVML load failed: {e}). AMD support via ADL is scaffolded \
-             but not wired in yet — see src/adl.rs."
-        )
-    })?;
-    let telemetry = nvml.read_primary_gpu()?;
+    let gpu = load_gpu_backend()?;
+    let telemetry = gpu.read_primary_gpu()?;
     println!("Detected GPU: {} (VRAM: {} MB)", telemetry.name, telemetry.vram_total_bytes / 1_048_576);
 
     let fingerprint = Fingerprint::from_telemetry(&telemetry);
@@ -98,7 +140,7 @@ fn run() -> anyhow::Result<()> {
         // Re-sampling telemetry every tick is deliberately cheap (a few
         // NVML calls) relative to the dispatch itself, so it doesn't skew
         // the load being measured.
-        match nvml.read_primary_gpu() {
+        match gpu.read_primary_gpu() {
             Ok(sample_telemetry) => {
                 let sample = sample_from_telemetry(elapsed, &sample_telemetry);
                 print_progress(&format!(
@@ -140,7 +182,7 @@ fn run() -> anyhow::Result<()> {
                 total_errors,
                 elapsed.as_secs()
             ));
-            match nvml.read_primary_gpu() {
+            match gpu.read_primary_gpu() {
                 Ok(t) => {
                     let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
                     if unsafe_temp {
@@ -164,7 +206,7 @@ fn run() -> anyhow::Result<()> {
     println!("Running render integrity test ({}s)...", FUR_TEST_DURATION.as_secs());
     let fur_result = vulkan::fur_test::run(&ctx, FUR_TEST_DURATION, |elapsed| {
         print_progress(&format!("  {:>3}s", elapsed.as_secs()));
-        match nvml.read_primary_gpu() {
+        match gpu.read_primary_gpu() {
             Ok(t) => {
                 let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
                 if unsafe_temp {
