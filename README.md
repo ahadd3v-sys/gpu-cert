@@ -167,17 +167,32 @@ actually be verified here vs. what's still gated on real hardware:
   in full to `fur_test.rs`'s graphics pipeline (render pass, framebuffer,
   readback) — it's the newest and most complex Vulkan code in the client,
   and the least proven.
+- **AMD support (`client/src/adl.rs`) is wired in but unverified against
+  real hardware.** `main.rs` tries NVML first, falls back to ADL2-based
+  telemetry (`ADL2_New_QueryPMLogData_Get`) for AMD. Struct layouts and
+  sensor IDs are ground-truthed against AMD's public ADL SDK
+  (GPUOpen-LibrariesAndSDKs/display-library) and cross-checked against
+  hashcat's `ext_ADL.c`, not hand-typed from memory — but this is still the
+  first real run, not a confirmed-working path. Known limitation, not a
+  bug: ADL has no verified call for a card's true *max* PCIe lane count
+  (only current), so `pcie_link_width_current`/`_max` are reported equal
+  for AMD — the degraded-slot check doesn't work yet on AMD, deliberately,
+  rather than risk a hardcoded max false-failing a card that's electrically
+  narrower than x16 by design (the RX 6600 non-XT, this project's own AMD
+  test card, is x8).
 - The 100°C safety-watchdog threshold (`safety.rs`) and the stress-telemetry
   scoring thresholds (`stress-analysis.ts`) are both conservative estimates,
   not calibrated against real GPU behavior — there's been no real hardware
   run yet to validate them against.
-- **The exe download itself isn't hosted anywhere yet.** `pages.ts` points
-  "Test your GPU" at a GitHub Releases URL
-  (`ahadd3v-sys/gpu-cert/releases/latest/download/gpu-cert.exe`) that
-  doesn't exist — no release has been cut, partly because Windows
-  cross-compilation is itself still unverified (above). Ships unsigned for
-  now (no code-signing budget yet); revisit once there's a release worth
-  signing.
+- **Resolved:** the exe is hosted and downloadable. `pages.ts`'s "Test your
+  GPU" points at
+  `ahadd3v-sys/gpu-cert/releases/latest/download/gpu-cert.exe`, which now
+  resolves — `v0.1.1` is cut and the repo is public (release assets on a
+  private repo 404 for anyone unauthenticated, which is everyone visiting
+  the site; making the repo public was also the deliberate call for the
+  product's own trust story, not just a distribution fix). Ships unsigned
+  still (no code-signing budget yet), so Windows SmartScreen will likely
+  flag it on first run.
 - **Resolved:** the backend is live at `https://gpu-cert.vercel.app` — real
   Turso DB (`gpu-cert` in a new `gpu-cert-us` group, `aws-us-east-1`, paired
   with the Vercel function's `iad1` region for a short DB hop), a real
@@ -191,5 +206,6 @@ actually be verified here vs. what's still gated on real hardware:
   once it's built and run.
 
 Final testing is gated on a real Windows machine with an Nvidia or AMD
-card — the exe still needs to be built and run there; no GitHub release has
-been cut yet (see "exe download isn't hosted" above).
+card — the exe is built, released, and downloadable now, but every
+hardware-facing code path (NVML, ADL, Vulkan) is still unverified against
+real hardware.
