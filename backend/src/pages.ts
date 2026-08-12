@@ -42,11 +42,12 @@ const HOME_CSS = `
      numbered: they run as a set, and no order is meaningful to a reader. */
   .protocol-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
   .protocol-block-wide { grid-column: 1 / -1; }
-  .protocol-name { font-family: "Fraunces", serif; font-weight: 600; font-size: 16px; margin: 0 0 4px; }
+  .protocol-name { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 16px; margin: 0 0 4px; }
   .protocol-method { font-size: 12.5px; color: var(--ink-muted); margin: 0; line-height: 1.55; }
   .protocol-catch { font-size: 12.5px; margin: 8px 0 0; }
-  /* Label, not a link: navy body text next to real links elsewhere on the
-     page reads as clickable, so this carries the eyebrow treatment instead. */
+  /* Label, not a link: mark-colored body text next to real links elsewhere
+     on the page reads as clickable, so this carries the eyebrow treatment
+     instead. */
   .protocol-catch b {
     font-weight: normal;
     font-size: 10px;
@@ -65,7 +66,7 @@ const HOME_CSS = `
     content: counter(step, decimal-leading-zero);
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 12px;
-    color: var(--navy);
+    color: var(--mark);
     padding-top: 3px;
   }
   .step-title { font-weight: normal; }
@@ -229,14 +230,14 @@ const DASHBOARD_CSS = `
   table.register { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   table.register th {
     text-align: left;
-    font-family: Georgia, serif;
-    font-weight: normal;
+    font-family: "Inter", sans-serif;
+    font-weight: 500;
     font-size: 10.5px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--navy);
+    color: var(--mark);
     padding: 0 0 9px;
-    border-bottom: 1px solid var(--navy);
+    border-bottom: 1px solid var(--mark);
   }
   table.register td { padding: 11px 0; border-bottom: 1px solid var(--paper-deep); vertical-align: baseline; }
   /* Cells are edge-to-edge columns with no border between them, so the gutter
@@ -252,12 +253,12 @@ const DASHBOARD_CSS = `
   .verdict-fail { color: var(--fail); }
   .issued { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; color: var(--ink-muted); white-space: nowrap; }
 
-  .empty-register { border: 1px dashed var(--paper-deep); padding: 26px; text-align: center; }
+  .empty-register { border: 1px dashed var(--paper-deep); border-radius: 6px; padding: 26px; text-align: center; }
   .empty-register p { margin: 0 0 16px; color: var(--ink-muted); font-size: 14px; }
 
   /* Connect-the-app panel. The key is the only interactive secret on the
      site, so it gets the monospace/tabular treatment data gets elsewhere. */
-  .key-panel { background: #f6f7f2; border: 1px solid var(--paper-deep); padding: 20px 22px; }
+  .key-panel { background: #f6f5f0; border: 1px solid var(--paper-deep); border-radius: 6px; padding: 20px 22px; }
   /* .statement caps at 54ch for running prose; inside this panel that leaves
      a short ragged column against a full-width box. */
   .key-panel .statement { max-width: none; }
@@ -269,6 +270,7 @@ const DASHBOARD_CSS = `
     color: var(--ink);
     background: var(--paper);
     border: 1px solid var(--paper-deep);
+    border-radius: 4px;
     padding: 9px 13px;
     user-select: all;
   }

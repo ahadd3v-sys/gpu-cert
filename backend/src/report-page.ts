@@ -61,7 +61,7 @@ function certificateNumber(id: string): string {
 // stamped rather than vector-perfect.
 function renderSeal(verdict: "Pass" | "Fail"): string {
   const passed = verdict === "Pass";
-  const color = passed ? "#1f6b45" : "#8a2a2a";
+  const color = passed ? "#3f6c4f" : "#96432f";
   const word = passed ? "PASS" : "FAIL";
   const subword = passed ? "CERTIFIED" : "NOT CERTIFIED";
   const ringText = "GPU CERT  •  INDEPENDENT VERIFICATION PROTOCOL  • ";
@@ -128,7 +128,7 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
     margin: 0;
     background: var(--paper-edge);
     color: var(--ink);
-    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -157,19 +157,19 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
   .verdict-edge.fail { background: var(--fail); }
 
   .tick { position: absolute; width: 16px; height: 16px; }
-  .tick-tl { top: 10px; left: 10px; border-top: 1.5px solid var(--navy); border-left: 1.5px solid var(--navy); }
-  .tick-tr { top: 10px; right: 10px; border-top: 1.5px solid var(--navy); border-right: 1.5px solid var(--navy); }
-  .tick-bl { bottom: 10px; left: 10px; border-bottom: 1.5px solid var(--navy); border-left: 1.5px solid var(--navy); }
-  .tick-br { bottom: 10px; right: 10px; border-bottom: 1.5px solid var(--navy); border-right: 1.5px solid var(--navy); }
+  .tick-tl { top: 10px; left: 10px; border-top: 1.5px solid var(--mark); border-left: 1.5px solid var(--mark); }
+  .tick-tr { top: 10px; right: 10px; border-top: 1.5px solid var(--mark); border-right: 1.5px solid var(--mark); }
+  .tick-bl { bottom: 10px; left: 10px; border-bottom: 1.5px solid var(--mark); border-left: 1.5px solid var(--mark); }
+  .tick-br { bottom: 10px; right: 10px; border-bottom: 1.5px solid var(--mark); border-right: 1.5px solid var(--mark); }
 
   .rule { border: none; border-top: 1px solid var(--paper-deep); margin: 28px 0; }
-  .rule-double { border: none; height: 4px; border-top: 1px solid var(--navy); border-bottom: 1px solid var(--navy); opacity: 0.5; margin: 22px 0; }
+  .rule-double { border: none; height: 4px; border-top: 1px solid var(--mark); border-bottom: 1px solid var(--mark); opacity: 0.5; margin: 22px 0; }
 
   .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 
   .mark-group { display: flex; align-items: center; gap: 12px; }
-  .emblem { width: 32px; height: 32px; color: var(--navy); flex-shrink: 0; }
-  .wordmark { font-family: "Fraunces", serif; font-weight: 650; font-size: 19px; letter-spacing: 0.04em; color: var(--navy); }
+  .emblem { width: 32px; height: 32px; color: var(--mark); flex-shrink: 0; }
+  .wordmark { font-family: "Space Grotesk", sans-serif; font-weight: 650; font-size: 19px; letter-spacing: 0.04em; color: var(--mark); }
   .tagline { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-muted); margin-top: 2px; }
 
   .serial-block { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; color: var(--ink-muted); }
@@ -178,17 +178,17 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
   .serial-value { color: var(--ink); font-variant-numeric: tabular-nums; }
 
   .hero { position: relative; text-align: center; padding: 8px 0 4px; }
-  .eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--navy); margin: 0 0 14px; }
-  .device-name { font-family: "Fraunces", serif; font-weight: 600; font-size: clamp(28px, 5vw, 38px); line-height: 1.12; margin: 0 0 18px; text-wrap: balance; }
+  .eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mark); margin: 0 0 14px; }
+  .device-name { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: clamp(28px, 5vw, 38px); line-height: 1.12; margin: 0 0 18px; text-wrap: balance; }
   .statement { max-width: 46ch; margin: 0 auto; color: var(--ink-muted); font-size: 14.5px; line-height: 1.65; }
 
   .seal { position: absolute; width: 152px; height: 152px; right: -6px; bottom: -46px; transform: rotate(-8deg); filter: drop-shadow(0 3px 4px rgba(27, 33, 29, 0.18)); }
-  .seal-ring-text { font-family: "Fraunces", serif; font-size: 8.6px; letter-spacing: 1.6px; }
+  .seal-ring-text { font-family: "Space Grotesk", sans-serif; font-size: 8.6px; letter-spacing: 1.6px; }
   .seal-mark { font-size: 11px; }
-  .seal-word { font-family: "Fraunces", serif; font-weight: 700; font-size: 30px; letter-spacing: 0.02em; }
+  .seal-word { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.02em; }
   .seal-subword { font-size: 9px; letter-spacing: 0.14em; }
 
-  .section-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--navy); margin: 0 0 14px; }
+  .section-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mark); margin: 0 0 14px; }
 
   dl.spec-grid { display: grid; grid-template-columns: 1fr auto; row-gap: 0; margin: 0; }
   .spec-row { display: contents; }
@@ -200,7 +200,7 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
   .protocol-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
   .protocol-block { min-width: 0; }
   .protocol-block-wide { grid-column: 1 / -1; }
-  .protocol-name { font-family: "Fraunces", serif; font-weight: 600; font-size: 16px; margin: 0 0 4px; }
+  .protocol-name { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 16px; margin: 0 0 4px; }
   .protocol-method { font-size: 12.5px; color: var(--ink-muted); margin: 0 0 14px; line-height: 1.5; }
   dl.protocol-results { display: grid; grid-template-columns: 1fr auto; row-gap: 6px; margin: 0; font-size: 13px; }
   .protocol-results > div { display: contents; }
@@ -219,18 +219,20 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
 
   .page-actions { margin-top: 28px; text-align: center; }
   .claim-button {
-    font-family: Georgia, serif;
+    font-family: "Inter", sans-serif;
+    font-weight: 500;
     font-size: 13.5px;
     padding: 9px 20px;
-    background: var(--navy);
+    background: var(--mark);
     color: var(--paper);
     border: none;
+    border-radius: 6px;
     cursor: pointer;
   }
   .claim-button:hover { opacity: 0.9; }
-  .claim-button:focus-visible, a:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }
+  .claim-button:focus-visible, a:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
   .claim-prompt { font-size: 13px; color: var(--ink-muted); margin: 0; }
-  .claim-prompt a { color: var(--navy); }
+  .claim-prompt a { color: var(--mark); }
 
   .report-id-footer { text-align: center; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11px; color: var(--ink-muted); margin-top: 14px; }
 

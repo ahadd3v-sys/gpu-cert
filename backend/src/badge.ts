@@ -1,5 +1,10 @@
 import { ImageResponse } from "@vercel/og";
 import type { ReportRow } from "../lib/db";
+import {
+  SPACE_GROTESK_WOFF_BADGE_BASE64,
+  INTER_400_WOFF_BADGE_BASE64,
+  INTER_600_WOFF_BADGE_BASE64,
+} from "./fonts";
 
 // Plain object literals shaped like React elements ({type, props}), not
 // JSX. `@vercel/og`/satori only need the shape — they don't call any real
@@ -14,6 +19,16 @@ function el(type: string, props: Record<string, any>): any {
   return { type, key: null, props };
 }
 
+// Same paper/ink/mark palette as the rest of the site — this is the image
+// that represents a certificate off-site (embedded in a listing, shared to
+// Discord), so it can't contradict the identity the certificate itself sets.
+const PAPER = "#ece9e2";
+const INK = "#1a1814";
+const INK_MUTED = "#6b6658";
+const MARK = "#14120f";
+const PASS = "#3f6c4f";
+const FAIL = "#96432f";
+
 export function renderBadge(report: ReportRow): ImageResponse {
   const passed = report.verdict === "Pass";
 
@@ -25,9 +40,9 @@ export function renderBadge(report: ReportRow): ImageResponse {
       flexDirection: "column",
       justifyContent: "center",
       padding: 40,
-      background: "#0b0d10",
-      color: "#e8eaed",
-      fontFamily: "sans-serif",
+      background: PAPER,
+      color: INK,
+      fontFamily: "Inter",
     },
     children: [
       el("div", {
@@ -37,24 +52,32 @@ export function renderBadge(report: ReportRow): ImageResponse {
             style: {
               display: "flex",
               padding: "6px 16px",
-              borderRadius: 999,
+              borderRadius: 6,
               fontSize: 20,
-              fontWeight: 700,
-              color: "#fff",
-              background: passed ? "#2fbf71" : "#e5484d",
+              fontWeight: 600,
+              color: PAPER,
+              background: passed ? PASS : FAIL,
             },
             children: passed ? "PASS" : "FAIL",
           }),
-          el("div", { style: { fontSize: 20, color: "#9aa1a9" }, children: "GPU Cert" }),
+          el("div", { style: { fontSize: 20, color: MARK, fontFamily: "Space Grotesk", fontWeight: 600 }, children: "GPU Cert" }),
         ],
       }),
-      el("div", { style: { display: "flex", fontSize: 40, fontWeight: 700, marginTop: 20 }, children: report.device_name }),
+      el("div", { style: { display: "flex", fontSize: 40, fontWeight: 600, fontFamily: "Space Grotesk", marginTop: 20 }, children: report.device_name }),
       el("div", {
-        style: { display: "flex", fontSize: 18, color: "#9aa1a9", marginTop: 8 },
+        style: { display: "flex", fontSize: 18, color: INK_MUTED, marginTop: 8 },
         children: `${report.vram_total_errors} VRAM error${report.vram_total_errors === 1 ? "" : "s"} · ${report.vram_passes_run} passes tested`,
       }),
     ],
   });
 
-  return new ImageResponse(tree, { width: 600, height: 315 });
+  return new ImageResponse(tree, {
+    width: 600,
+    height: 315,
+    fonts: [
+      { name: "Inter", data: Buffer.from(INTER_400_WOFF_BADGE_BASE64, "base64"), weight: 400, style: "normal" },
+      { name: "Inter", data: Buffer.from(INTER_600_WOFF_BADGE_BASE64, "base64"), weight: 600, style: "normal" },
+      { name: "Space Grotesk", data: Buffer.from(SPACE_GROTESK_WOFF_BADGE_BASE64, "base64"), weight: 600, style: "normal" },
+    ],
+  });
 }
