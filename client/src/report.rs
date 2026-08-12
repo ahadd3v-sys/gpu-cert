@@ -88,6 +88,14 @@ impl FurTestReport {
 pub struct CertifyResponse {
     pub report_url: String,
     pub badge_url: String,
+    /// Email of the account the report was filed under, if an upload key was
+    /// sent and recognized. `None` means the report is public but unattached,
+    /// which is a normal outcome, not an error.
+    pub filed_to: Option<String>,
+    /// `Some(false)` specifically means a key was sent and the backend did not
+    /// recognize it — worth telling the user, since they typed it in. `None`
+    /// means no key was sent at all.
+    pub upload_key_recognized: Option<bool>,
 }
 
 /// Backend base URL — hardcoded to production for now since there's no
@@ -95,11 +103,18 @@ pub struct CertifyResponse {
 /// deploy worth pointing the client at during development.
 const BACKEND_BASE_URL: &str = "https://gpu-cert.vercel.app";
 
-pub fn submit(req: &CertifyRequest) -> anyhow::Result<CertifyResponse> {
+/// `upload_key` is the "connect the app to your account" credential the user
+/// copies off their dashboard. It's optional on purpose: the tool is fully
+/// usable without an account, and a report submitted without a key is stored
+/// public-but-unattached, claimable from its page later.
+pub fn submit(req: &CertifyRequest, upload_key: Option<&str>) -> anyhow::Result<CertifyResponse> {
     let client = reqwest::blocking::Client::new();
-    let resp = client
-        .post(format!("{BACKEND_BASE_URL}/api/certify"))
-        .json(req)
+    let mut builder = client.post(format!("{BACKEND_BASE_URL}/api/certify")).json(req);
+    if let Some(key) = upload_key {
+        builder = builder.bearer_auth(key);
+    }
+
+    let resp = builder
         .send()
         .map_err(|e| anyhow::anyhow!("failed to reach backend: {e}"))?;
 
@@ -111,6 +126,10 @@ pub fn submit(req: &CertifyRequest) -> anyhow::Result<CertifyResponse> {
     struct RawResponse {
         report_url: String,
         badge_url: String,
+        #[serde(default)]
+        filed_to: Option<String>,
+        #[serde(default)]
+        upload_key_recognized: Option<bool>,
     }
     let raw: RawResponse = resp
         .json()
@@ -119,6 +138,8 @@ pub fn submit(req: &CertifyRequest) -> anyhow::Result<CertifyResponse> {
     Ok(CertifyResponse {
         report_url: raw.report_url,
         badge_url: raw.badge_url,
+        filed_to: raw.filed_to,
+        upload_key_recognized: raw.upload_key_recognized,
     })
 }
 

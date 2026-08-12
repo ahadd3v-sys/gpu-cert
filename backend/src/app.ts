@@ -1,6 +1,19 @@
 import { Hono } from "hono";
 import { setCookie, deleteCookie } from "hono/cookie";
-import { db, ensureSchema, getReportById, getReportsForUser, claimReport, createUser, getUserByEmail } from "../lib/db";
+import {
+  db,
+  ensureSchema,
+  getReportById,
+  getReportsForUser,
+  claimReport,
+  createUser,
+  getUserByEmail,
+  getUserById,
+  getUserByUploadKey,
+  ensureUploadKey,
+  generateUploadKey,
+  setUploadKey,
+} from "../lib/db";
 import { CertifyRequestSchema, computeVerdict, canonicalReportString } from "../lib/certify";
 import { signReport } from "../lib/signing";
 import { hashPassword, verifyPassword } from "../lib/password";
@@ -20,9 +33,19 @@ const SESSION_COOKIE_OPTS = {
 
 export const app = new Hono();
 
-// The exe submits here directly — no session cookie, so every report
-// starts unowned (user_id NULL) and gets attached to an account later via
-// the claim flow below, once a logged-in browser opens the report page.
+// The exe submits here directly. It has no browser session, so ownership
+// works one of two ways:
+//
+//   - With `Authorization: Bearer <upload key>`, the report is attributed to
+//     that account at ingest. This is the "connect the app to your account"
+//     path — the exe holds the key, so the run files itself.
+//   - Without one, the report is stored unowned (user_id NULL) and stays
+//     anonymous until someone claims it from the report page below.
+//
+// A bad key is deliberately not an error: the run took 16 minutes of real GPU
+// load and the report itself is still valid, so it gets stored anonymously and
+// the response says it wasn't attributed. Rejecting the submission would throw
+// away good test data over a typo.
 app.post("/api/certify", async (c) => {
   const body = await c.req.json().catch(() => null);
   if (body === null) {
@@ -37,6 +60,9 @@ app.post("/api/certify", async (c) => {
 
   await ensureSchema();
 
+  const bearer = c.req.header("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  const keyOwner = bearer ? await getUserByUploadKey(bearer) : null;
+
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const result = computeVerdict(req);
@@ -44,7 +70,7 @@ app.post("/api/certify", async (c) => {
 
   await db().execute({
     sql: `INSERT INTO reports (
-      id, client_version, device_name,
+      id, user_id, client_version, device_name,
       fingerprint_uuid, fingerprint_pci_device_id, fingerprint_vram_total_bytes,
       fingerprint_vbios_version, fingerprint_hash,
       pcie_link_width_current, pcie_link_width_max,
@@ -54,9 +80,10 @@ app.post("/api/certify", async (c) => {
       vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety,
       fur_frames_rendered, fur_duration_ms, fur_mismatches, fur_pixels_checked, fur_aborted_for_safety,
       signature, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
+      keyOwner?.id ?? null,
       req.client_version,
       req.device_name,
       req.fingerprint.uuid,
@@ -93,6 +120,10 @@ app.post("/api/certify", async (c) => {
   return c.json({
     report_url: `${BASE_URL}/r/${id}`,
     badge_url: `${BASE_URL}/r/${id}/badge`,
+    // Lets the exe print "filed to <account>" vs. "not attached to an
+    // account" instead of guessing which happened.
+    filed_to: keyOwner?.email ?? null,
+    upload_key_recognized: bearer ? keyOwner !== null : null,
   });
 });
 
@@ -174,6 +205,22 @@ app.post("/logout", (c) => {
 app.get("/dashboard", async (c) => {
   const userId = await getSessionUserId(c);
   if (!userId) return c.redirect("/login?next=/dashboard");
-  const reports = await getReportsForUser(userId);
-  return c.html(renderDashboard(reports));
+
+  const user = await getUserById(userId);
+  // A valid session for a deleted account: clear it rather than 500 on the
+  // missing row.
+  if (!user) {
+    deleteCookie(c, COOKIE_NAME, { path: "/" });
+    return c.redirect("/login?next=/dashboard");
+  }
+
+  const [reports, uploadKey] = await Promise.all([getReportsForUser(userId), ensureUploadKey(user)]);
+  return c.html(renderDashboard(reports, user.email, uploadKey));
+});
+
+app.post("/dashboard/key/rotate", async (c) => {
+  const userId = await getSessionUserId(c);
+  if (!userId) return c.redirect("/login?next=/dashboard");
+  await setUploadKey(userId, generateUploadKey());
+  return c.redirect("/dashboard");
 });

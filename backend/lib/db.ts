@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  upload_key TEXT UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -64,15 +65,33 @@ CREATE TABLE IF NOT EXISTS reports (
 
 CREATE INDEX IF NOT EXISTS idx_reports_fingerprint_hash ON reports (fingerprint_hash);
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports (user_id);
+
+-- Enforces upload_key uniqueness on DBs where the column arrived via ALTER
+-- (SQLite can't add a UNIQUE column in place). A unique index permits
+-- multiple NULLs, which is what pre-backfill users hold.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_upload_key ON users (upload_key);
 `;
 
 let initialized = false;
+
+// CREATE TABLE IF NOT EXISTS won't add a column to a table that already
+// exists, so anything added to SCHEMA after a DB has been created needs a
+// matching ALTER here. Each runs inside its own try: "duplicate column name"
+// is the expected outcome on an already-migrated DB, not a failure.
+const MIGRATIONS = [`ALTER TABLE users ADD COLUMN upload_key TEXT`];
 
 export async function ensureSchema() {
   if (initialized) return;
   const statements = SCHEMA.split(";").map((s) => s.trim()).filter(Boolean);
   for (const stmt of statements) {
     await db().execute(stmt);
+  }
+  for (const stmt of MIGRATIONS) {
+    try {
+      await db().execute(stmt);
+    } catch {
+      // column already exists
+    }
   }
   initialized = true;
 }
@@ -157,23 +176,46 @@ export interface UserRow {
   id: string;
   email: string;
   password_hash: string;
+  upload_key: string | null;
   created_at: string;
+}
+
+const USER_COLUMNS = `id, email, password_hash, upload_key, created_at`;
+
+// Read aloud off a dashboard and typed into a console prompt, so the alphabet
+// drops the four glyph pairs that get mistyped that way (I/1, O/0) and the
+// key is grouped in fours. 16 chars from a 32-symbol alphabet is 80 bits.
+const KEY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+export function generateUploadKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const chars = Array.from(bytes, (b) => KEY_ALPHABET[b % KEY_ALPHABET.length]);
+  const groups: string[] = [];
+  for (let i = 0; i < 16; i += 4) groups.push(chars.slice(i, i + 4).join(""));
+  return `GPUC-${groups.join("-")}`;
 }
 
 export async function createUser(email: string, passwordHash: string): Promise<UserRow> {
   await ensureSchema();
   const id = crypto.randomUUID();
+  const uploadKey = generateUploadKey();
   await db().execute({
-    sql: `INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)`,
-    args: [id, email, passwordHash],
+    sql: `INSERT INTO users (id, email, password_hash, upload_key) VALUES (?, ?, ?, ?)`,
+    args: [id, email, passwordHash, uploadKey],
   });
-  return { id, email, password_hash: passwordHash, created_at: new Date().toISOString() };
+  return {
+    id,
+    email,
+    password_hash: passwordHash,
+    upload_key: uploadKey,
+    created_at: new Date().toISOString(),
+  };
 }
 
 export async function getUserByEmail(email: string): Promise<UserRow | null> {
   await ensureSchema();
   const res = await db().execute({
-    sql: `SELECT id, email, password_hash, created_at FROM users WHERE email = ?`,
+    sql: `SELECT ${USER_COLUMNS} FROM users WHERE email = ?`,
     args: [email],
   });
   return (res.rows[0] as unknown as UserRow) ?? null;
@@ -182,8 +224,36 @@ export async function getUserByEmail(email: string): Promise<UserRow | null> {
 export async function getUserById(id: string): Promise<UserRow | null> {
   await ensureSchema();
   const res = await db().execute({
-    sql: `SELECT id, email, password_hash, created_at FROM users WHERE id = ?`,
+    sql: `SELECT ${USER_COLUMNS} FROM users WHERE id = ?`,
     args: [id],
   });
   return (res.rows[0] as unknown as UserRow) ?? null;
+}
+
+// The exe authenticates with this and nothing else, so the lookup is the
+// whole authorization check for attributing a report at ingest.
+export async function getUserByUploadKey(uploadKey: string): Promise<UserRow | null> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT ${USER_COLUMNS} FROM users WHERE upload_key = ?`,
+    args: [uploadKey],
+  });
+  return (res.rows[0] as unknown as UserRow) ?? null;
+}
+
+export async function setUploadKey(userId: string, uploadKey: string): Promise<void> {
+  await ensureSchema();
+  await db().execute({
+    sql: `UPDATE users SET upload_key = ? WHERE id = ?`,
+    args: [uploadKey, userId],
+  });
+}
+
+// Accounts created before upload keys existed have upload_key NULL; the
+// dashboard mints one on first view rather than needing a data backfill.
+export async function ensureUploadKey(user: UserRow): Promise<string> {
+  if (user.upload_key) return user.upload_key;
+  const uploadKey = generateUploadKey();
+  await setUploadKey(user.id, uploadKey);
+  return uploadKey;
 }

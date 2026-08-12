@@ -1,3 +1,4 @@
+mod account;
 mod adl;
 mod fingerprint;
 mod nvml;
@@ -63,6 +64,12 @@ fn pause_before_exit() {
 fn run() -> anyhow::Result<()> {
     println!("gpu-cert v{} — hardware verification client", env!("CARGO_PKG_VERSION"));
 
+    if std::env::args().any(|a| a == "--forget-account") {
+        account::forget()?;
+        println!("Account disconnected. Future runs will file anonymously.");
+        return Ok(());
+    }
+
     let nvml = nvml::Nvml::load().map_err(|e| {
         anyhow::anyhow!(
             "no supported GPU found (NVML load failed: {e}). AMD support via ADL is scaffolded \
@@ -77,6 +84,12 @@ fn run() -> anyhow::Result<()> {
 
     let ctx = VulkanContext::new()?;
     println!("Vulkan device: {}", ctx.device_name);
+
+    // Asked here, after we know there's a working GPU to test but before the
+    // ~16 minutes of load start. Asking afterwards would mean an unattended run
+    // finishes, waits on a prompt nobody is sitting at, and files anonymously
+    // by default — the opposite of what the user chose.
+    let upload_key = account::prompt_for_key();
 
     println!("Running stress test ({} min)...", STRESS_TEST_DURATION.as_secs() / 60);
     let mut telemetry_series = Vec::new();
@@ -181,9 +194,22 @@ fn run() -> anyhow::Result<()> {
     };
 
     println!("Submitting report...");
-    let response = report::submit(&request)?;
+    let response = report::submit(&request, upload_key.as_deref())?;
     println!("Done. Report: {}", response.report_url);
     println!("Badge: {}", response.badge_url);
+
+    match (&response.filed_to, response.upload_key_recognized) {
+        (Some(email), _) => println!("Filed to {email}."),
+        // A key was sent and rejected. The report is still valid and public, so
+        // this is a note about attribution, not a failed run.
+        (None, Some(false)) => {
+            println!(
+                "The upload key wasn't recognized, so this certificate isn't attached to an account."
+            );
+            println!("Check the key on your dashboard, then add this certificate from its page.");
+        }
+        (None, _) => println!("Not attached to an account. You can add it from the report page."),
+    }
 
     open_browser(&response.report_url);
 

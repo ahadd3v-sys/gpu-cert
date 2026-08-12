@@ -1,6 +1,6 @@
 import type { ReportRow } from "../lib/db";
 import { esc } from "./html";
-import { FRAUNCES_WOFF2_BASE64 } from "./fonts";
+import { FONT_FACE_CSS, TOKENS_CSS, renderEmblem } from "./theme";
 
 // Hand-written HTML string, not JSX — this is a single static-shaped page
 // with no interactivity beyond the claim form, and skipping JSX means
@@ -85,20 +85,6 @@ function renderSeal(verdict: "Pass" | "Fail"): string {
   </svg>`;
 }
 
-// Small hexagonal die/chip mark used as the masthead emblem — the
-// letterhead logotype an issuing body would use, rendered geometrically
-// rather than as a literal GPU illustration so it stays legible at 32px.
-function renderEmblem(): string {
-  return `<svg class="emblem" viewBox="0 0 32 32" aria-hidden="true">
-    <polygon points="16,2 28,9 28,23 16,30 4,23 4,9" fill="none" stroke="currentColor" stroke-width="1.4"/>
-    <rect x="11" y="11" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.2"/>
-    <line x1="16" y1="2" x2="16" y2="11" stroke="currentColor" stroke-width="1.2"/>
-    <line x1="16" y1="21" x2="16" y2="30" stroke="currentColor" stroke-width="1.2"/>
-    <line x1="4" y1="16" x2="11" y2="16" stroke="currentColor" stroke-width="1.2"/>
-    <line x1="21" y1="16" x2="28" y2="16" stroke="currentColor" stroke-width="1.2"/>
-  </svg>`;
-}
-
 export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): string {
   const passed = report.verdict === "Pass";
   const vramPct = Math.round((report.vram_bytes_tested / report.fingerprint_vram_total_bytes) * 100);
@@ -132,24 +118,9 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(report.device_name)} — GPU Cert</title>
 <style>
-  @font-face {
-    font-family: "Fraunces";
-    font-style: normal;
-    font-weight: 300 900;
-    font-display: swap;
-    src: url(data:font/woff2;base64,${FRAUNCES_WOFF2_BASE64}) format("woff2");
-  }
+  ${FONT_FACE_CSS}
 
-  :root {
-    --paper: #eef0e9;
-    --paper-deep: #e3e6db;
-    --paper-edge: #dde1d5;
-    --ink: #1b211d;
-    --ink-muted: #5c655c;
-    --navy: #23395d;
-    --pass: #1f6b45;
-    --fail: #8a2a2a;
-  }
+  ${TOKENS_CSS}
 
   * { box-sizing: border-box; }
 

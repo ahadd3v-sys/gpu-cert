@@ -25,14 +25,37 @@ you sell *to them*; this stays self-serve for a seller's own listing.
 
 ## Flow
 
-Site-first, not exe-first: log in on the website, click "Test your GPU",
-download `gpu-cert.exe`, run it, it submits its report and opens your
-browser back to the results page, which you can save to your account. The
-exe itself is a plain console app — no GUI. The trust problem a GUI would
-otherwise need to solve (a random exe reading your hardware and phoning
-home looks like malware) is handled upstream instead: the only way to get
-this exe is by clicking a button on a site you logged into, so the download
-itself is the trust signal, not the window's appearance.
+No account required, following Geekbench's model: download `gpu-cert.exe`
+from the site, run it, and it submits its report and opens your browser to
+the finished certificate. That certificate is public at its own URL whether
+or not anyone ever signs up.
+
+An account is purely additive, and there are two ways into one — again
+mirroring Geekbench, where you can either connect the app to your account or
+attach an already-uploaded result afterwards:
+
+- **Connect the app.** The dashboard shows an upload key
+  (`GPUC-XXXX-XXXX-XXXX-XXXX`). The exe asks for it once, before the tests
+  start, and caches it in `%APPDATA%\gpu-cert\upload-key`. Every run after
+  that arrives with `Authorization: Bearer <key>` and is attributed at ingest.
+  `--forget-account` removes it; "Replace key" on the dashboard revokes it
+  server-side.
+- **Claim it after the fact.** A report submitted without a key is stored
+  unowned and can be attached to an account from its own page later. First
+  claim wins.
+
+A mistyped key is deliberately not an error: the run represents ~16 minutes
+of real GPU load, so the report is stored anonymously and the response tells
+the exe it wasn't attributed, rather than discarding valid test data.
+
+The exe is a plain console app, no GUI. The trust problem a GUI would
+otherwise need to solve (a random exe reading your hardware and phoning home
+looks like malware) is handled by provenance instead: it's downloaded from
+the site and from a GitHub release, and the certificate it produces is
+independently verifiable. Note this is weaker than the previous
+login-gated framing, which could argue the download itself was a trust
+signal; dropping the login gate was the deliberate trade for not making
+signup a prerequisite to testing a card.
 
 ## Layout
 
@@ -41,11 +64,15 @@ itself is the trust signal, not the window's appearance.
   render integrity — see below), checks PCIe link width, and submits a
   signed report request to the backend.
 - `backend/` — Hono app on Vercel (Turso for storage). Accounts
-  (signup/login, JWT session cookie), ingests reports from the exe
-  (unauthenticated — the exe has no browser session), lets a logged-in
-  viewer claim an unowned report to their account, serves the public
-  `/r/:reportId` report page and shareable badge image, and a `/dashboard`
-  listing a user's claimed reports.
+  (signup/login, JWT session cookie), ingests reports from the exe (bearer
+  upload key optional, no browser session), lets a logged-in viewer claim an
+  unowned report, serves the public `/r/:reportId` certificate and shareable
+  badge image, and a `/dashboard` that is both the register of a user's
+  certificates and where their upload key lives.
+- `backend/src/theme.ts` — the shared visual language: palette tokens, the
+  embedded Fraunces face, the letterhead masthead, and the page shell. Both
+  `report-page.ts` and `pages.ts` import from here, so the palette is defined
+  once.
 
 ## Verification protocol
 
@@ -93,10 +120,19 @@ pattern (`jose` JWT in an httpOnly cookie) rather than inventing a new
 session mechanism; password hashing is Node's built-in `scrypt`, no new
 dependency.
 
-The site pages beyond the report page (home, login, signup, dashboard) are
-deliberately undressed — no CSS, functional scaffolding only. Visual design
-for those is being done separately; there's nothing here to fight or redo
-once that lands.
+The site pages (home, login, signup, dashboard) are now designed, and they
+extend the certificate's identity rather than introducing a second look: same
+paper/ink/navy tokens, same Fraunces-over-Georgia pairing, same corner ticks
+and letterhead masthead, all shared from `theme.ts`. Like the certificate they
+commit to one fixed light treatment instead of following the viewer's
+light/dark preference. Two structural choices worth keeping:
+
+- The dashboard is a **register** — a ledger table keyed by certificate
+  number, not a card grid — because a certificate number is how you refer to
+  one of these documents.
+- The home page's "how it works" list is numbered and the three tests are
+  not. The steps are genuinely sequential; the tests run as a set with no
+  meaningful order.
 
 ## Known constraints
 
@@ -112,6 +148,11 @@ actually be verified here vs. what's still gated on real hardware:
   PE32+ Windows console exe, 3.8 MB release / stripped. This is the target
   to ship from. Still unverified: whether it actually *runs* correctly —
   no real Windows machine or GPU here to test against.
+- **The client's unit tests can't be executed here.** There's no native `cc`
+  on this box (only `x86_64-w64-mingw32-gcc`), so `cargo test` fails to link
+  its test binary even though `cargo check` and the Windows cross-build both
+  pass. `account::normalize`'s tests are therefore written but unrun — worth
+  running first on the Windows machine.
 - **NVML/ADL/Vulkan can't be exercised at all here** — no real driver, GPU,
   or Windows Vulkan ICD in this dev environment. `cargo check`/`cargo build`
   (native Linux target) and the shader→SPIR-V build step both pass, and the
