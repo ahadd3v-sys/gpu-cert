@@ -202,7 +202,12 @@ pub struct Adl {
     // selection — not stored, unlike the other symbols here which are
     // re-used on every `read_primary_gpu` call.
     adapter_memory_info2_get: Symbol<'static, unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlMemoryInfo2) -> c_int>,
-    adapter_vbios_info_get: Symbol<'static, unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlBiosInfo) -> c_int>,
+    // Optional, not required: not every driver version exports this ADL2
+    // wrapper (confirmed missing on at least one real RX 6600 system), and
+    // VBIOS is fingerprint-quality-only, not safety- or verdict-critical —
+    // a missing symbol here shouldn't take down the whole ADL path the way
+    // a missing PMLog or adapter-enumeration symbol should.
+    adapter_vbios_info_get: Option<Symbol<'static, unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlBiosInfo) -> c_int>>,
     new_query_pmlog_data_get: Symbol<'static, unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlPmLogDataOutput) -> c_int>,
     adapter_index: c_int,
 }
@@ -223,6 +228,15 @@ impl Adl {
                         lib.get::<$ty>($name)
                             .map_err(|e| anyhow::anyhow!("missing ADL symbol {}: {e}", stringify!($name)))?,
                     )
+                };
+            }
+            // Same lookup, but a missing symbol degrades to `None` instead
+            // of aborting `load()` — for optional, non-safety-critical data.
+            macro_rules! opt_sym {
+                ($name:literal, $ty:ty) => {
+                    lib.get::<$ty>($name)
+                        .ok()
+                        .map(|s| std::mem::transmute::<Symbol<'_, $ty>, Symbol<'static, $ty>>(s))
                 };
             }
 
@@ -247,10 +261,13 @@ impl Adl {
                 b"ADL2_Adapter_MemoryInfo2_Get\0",
                 unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlMemoryInfo2) -> c_int
             );
-            let adapter_vbios_info_get = sym!(
+            let adapter_vbios_info_get = opt_sym!(
                 b"ADL2_Adapter_VBIOSInfo_Get\0",
                 unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlBiosInfo) -> c_int
             );
+            if adapter_vbios_info_get.is_none() {
+                println!("(ADL2_Adapter_VBIOSInfo_Get not available on this driver — VBIOS version will report as \"unknown\")");
+            }
             let new_query_pmlog_data_get = sym!(
                 b"ADL2_New_QueryPMLogData_Get\0",
                 unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlPmLogDataOutput) -> c_int
@@ -351,15 +368,18 @@ impl Adl {
                 "ADL2_Adapter_MemoryInfo2_Get",
             )?;
 
-            let vbios_version = {
-                let mut bios = AdlBiosInfo::zeroed();
-                if (self.adapter_vbios_info_get)(self.context, self.adapter_index, &mut bios) == ADL_OK {
-                    cstr_field(&bios.version)
-                } else {
-                    // Not safety-critical, only fingerprint quality — degrade
-                    // rather than fail the whole read over this one field.
-                    String::from("unknown")
+            let vbios_version = match &self.adapter_vbios_info_get {
+                Some(f) => {
+                    let mut bios = AdlBiosInfo::zeroed();
+                    if f(self.context, self.adapter_index, &mut bios) == ADL_OK {
+                        cstr_field(&bios.version)
+                    } else {
+                        // Not safety-critical, only fingerprint quality —
+                        // degrade rather than fail the whole read over this.
+                        String::from("unknown")
+                    }
                 }
+                None => String::from("unknown"),
             };
 
             let mut pmlog = AdlPmLogDataOutput::zeroed();
