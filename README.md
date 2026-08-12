@@ -6,12 +6,18 @@
 
 ## Preview
 
+The site's live now: **https://gpu-cert.vercel.app**.
+
 The report page (`backend/src/report-page.ts`) is styled as an actual
 certificate rather than a plain results screen — masthead, GPU spec table,
-verification protocol section, ink-stamp seal. Rendered PASS/FAIL previews
-(mock data, no live backend deployed yet): **https://claude.ai/code/artifact/89d5994a-7cae-46b6-b173-3e0f53daabcf**
+verification protocol section, ink-stamp seal. Palette and type across the
+whole site (`backend/src/theme.ts`) are anurfi.net's own tokens, reused
+directly rather than reinvented, so GPU Cert reads as the same issuing
+body's family rather than a one-off identity. Screenshot gallery of the
+redesign (mock data): **https://claude.ai/code/artifact/cbca434f-8a03-4e15-9e40-0045c12a1e8a**
 (private artifact tied to Ahad's claude.ai account — share it from the page's
-share menu if someone else needs the link).
+share menu if someone else needs the link). The older Fraunces/navy preview
+link is stale.
 
 ## Product scope
 
@@ -172,8 +178,18 @@ actually be verified here vs. what's still gated on real hardware:
   cross-compilation is itself still unverified (above). Ships unsigned for
   now (no code-signing budget yet); revisit once there's a release worth
   signing.
-- Real Turso DB, Vercel project, and Ed25519 signing key are still
-  unprovisioned — everything so far has been tested against `file:local.db`
-  and throwaway keys.
+- **Resolved:** the backend is live at `https://gpu-cert.vercel.app` — real
+  Turso DB (`gpu-cert` in a new `gpu-cert-us` group, `aws-us-east-1`, paired
+  with the Vercel function's `iad1` region for a short DB hop), a real
+  Ed25519 signing key, and all other production secrets are provisioned and
+  set (see `~/.secrets/gpu-cert production` for the values — the signing key
+  especially has no recovery if lost). Verified end-to-end against the live
+  deployment: signup, login, logout, dashboard, upload-key report
+  attribution, and claim-after-fact all round-trip correctly. This also
+  means `client/src/report.rs`'s hardcoded `BACKEND_BASE_URL` now points at
+  a real, working backend — the exe has somewhere to actually submit to
+  once it's built and run.
 
-Final testing is gated on a real Windows machine with an Nvidia or AMD card.
+Final testing is gated on a real Windows machine with an Nvidia or AMD
+card — the exe still needs to be built and run there; no GitHub release has
+been cut yet (see "exe download isn't hosted" above).
