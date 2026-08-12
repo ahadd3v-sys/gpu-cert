@@ -131,7 +131,15 @@ impl ComputeKernel {
             let pool_sizes = [vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(buffer_count)];
+            // FREE_DESCRIPTOR_SET is required for `dispatch`'s per-call
+            // free_descriptor_sets to actually do anything — without it,
+            // freeing is a spec-defined no-op (drivers vary on whether they
+            // even error on the attempt), so with max_sets(1) the pool
+            // silently permanently exhausts after exactly one dispatch:
+            // confirmed on real hardware as ERROR_OUT_OF_POOL_MEMORY on the
+            // second call, one tick into the stress test.
             let pool_info = vk::DescriptorPoolCreateInfo::default()
+                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
                 .pool_sizes(&pool_sizes)
                 .max_sets(1);
             let descriptor_pool = ctx
@@ -258,7 +266,12 @@ impl ComputeKernel {
 
             ctx.device.destroy_fence(fence, None);
             ctx.device.free_command_buffers(self.command_pool, &[cmd]);
-            ctx.device.free_descriptor_sets(self.descriptor_pool, &[descriptor_set]).ok();
+            // Not `.ok()`-swallowed: a failure here means the next dispatch
+            // will exhaust the pool, so surfacing it now is far more useful
+            // than a confusing ERROR_OUT_OF_POOL_MEMORY on a later call.
+            ctx.device
+                .free_descriptor_sets(self.descriptor_pool, &[descriptor_set])
+                .map_err(|e| anyhow::anyhow!("vkFreeDescriptorSets failed: {e:?}"))?;
 
             Ok(())
         }
