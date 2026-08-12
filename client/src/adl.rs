@@ -47,8 +47,13 @@ const ADL_LIB_NAME: &str = "atiadlxx.dll";
 const ADL_OK: c_int = 0;
 const ADL_MAX_PATH: usize = 256;
 const ADL_PMLOG_MAX_SENSORS: usize = 256;
-// PCI-SIG vendor ID for AMD/ATI.
-const AMD_VENDOR_ID: c_int = 0x1002;
+// PCI-SIG vendor ID for AMD/ATI is the hex value 0x1002 — but confirmed via
+// a real ADL adapter dump that AdapterInfo.iVendorID reports it as the
+// *decimal* number 1002 (prints as 0x03ea in hex), not the hex value 0x1002
+// itself. Comparing against 0x1002 silently matched nothing on real
+// hardware — every adapter (11 of them, all genuinely AMD) got filtered out
+// as "not AMD."
+const AMD_VENDOR_ID: c_int = 1002;
 
 // ADL_PMLOG_SENSORS enum values (adl_defines.h). The sensors array in
 // ADLPMLogDataOutput is indexed directly by these — not searched.
@@ -297,17 +302,48 @@ impl Adl {
             // inactive depending on which adapter entry ADL considers to
             // own the active display path. GPU-Z and similar tools don't
             // gate sensor reads on it either; presence is enough.
-            let mut chosen: Option<c_int> = None;
+            //
+            // A real system can enumerate many AMD "adapter" entries for
+            // one physical GPU (one per display head/output path) plus a
+            // separate entry for an integrated APU, if present — confirmed
+            // on real hardware: 11 entries for a single discrete card. The
+            // first present+AMD match isn't reliable, so instead: rank
+            // every candidate by reported VRAM (a discrete card reports
+            // far more than an iGPU) and take the first one, in that order,
+            // that actually answers a live PMLog temperature query — the
+            // same read the safety watchdog depends on every tick, so an
+            // adapter entry that can't answer it isn't usable here even if
+            // it otherwise looks like the right card.
+            let mut candidates: Vec<(c_int, i64, String)> = Vec::new();
             for info in &infos {
+                let name = cstr_field(&info.adapter_name);
                 println!(
-                    "  ADL adapter {}: vendor=0x{:04x} present={} name={:?}",
-                    info.adapter_index,
-                    info.vendor_id,
-                    info.present,
-                    cstr_field(&info.adapter_name),
+                    "  ADL adapter {}: vendor={} present={} name={name:?}",
+                    info.adapter_index, info.vendor_id, info.present,
                 );
-                if info.vendor_id == AMD_VENDOR_ID && info.present != 0 && chosen.is_none() {
-                    chosen = Some(info.adapter_index);
+                if info.vendor_id != AMD_VENDOR_ID || info.present == 0 {
+                    continue;
+                }
+                let mut mem = AdlMemoryInfo2::zeroed();
+                if (adapter_memory_info2_get)(context, info.adapter_index, &mut mem) == ADL_OK {
+                    candidates.push((info.adapter_index, mem.memory_size, name));
+                }
+            }
+            candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+            let mut chosen: Option<c_int> = None;
+            for (idx, vram, name) in &candidates {
+                let mut pmlog = AdlPmLogDataOutput::zeroed();
+                let has_temp = (new_query_pmlog_data_get)(context, *idx, &mut pmlog) == ADL_OK
+                    && pmlog.sensors.get(PMLOG_TEMPERATURE_EDGE).is_some_and(|s| s.supported != 0);
+                println!(
+                    "  candidate adapter {idx} ({name:?}, {} MB reported VRAM): temperature sensor {}",
+                    vram / 1_048_576,
+                    if has_temp { "available" } else { "unavailable" },
+                );
+                if has_temp {
+                    chosen = Some(*idx);
+                    break;
                 }
             }
 
@@ -316,7 +352,9 @@ impl Adl {
                 None => {
                     let _ = main_control_destroy(context);
                     anyhow::bail!(
-                        "no AMD GPU found among {count} ADL adapter(s) — see the adapter list printed above"
+                        "found {} AMD adapter candidate(s) among {count} ADL adapter(s), but none answered \
+                         a live temperature query — see the adapter list printed above",
+                        candidates.len()
                     );
                 }
             };
