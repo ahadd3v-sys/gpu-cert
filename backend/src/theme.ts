@@ -18,8 +18,8 @@
 // the thing the whole site exists to make believable. The rest of the site
 // follows suit for the same reason: it's the same issuing body's
 // stationery, not a separate product with its own preferences to honor.
-import { esc } from "./html";
-import { SPACE_GROTESK_WOFF2_BASE64, INTER_WOFF2_BASE64 } from "./fonts";
+import { esc } from "./html.js";
+import { SPACE_GROTESK_WOFF2_BASE64, INTER_WOFF2_BASE64 } from "./fonts.js";
 
 export const TOKENS_CSS = `:root {
     --paper: #ece9e2;

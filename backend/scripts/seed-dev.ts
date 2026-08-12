@@ -1,7 +1,7 @@
 // Fills a local file:local.db with one account and a few reports so the site
 // pages can be opened and looked at. Dev-only; never run against a real DB.
-import { db, ensureSchema, createUser, getUserByEmail } from "../lib/db";
-import { hashPassword } from "../lib/password";
+import { db, ensureSchema, createUser, getUserByEmail } from "../lib/db.js";
+import { hashPassword } from "../lib/password.js";
 
 const EMAIL = "seller@example.com";
 const PASSWORD = "devpassword";

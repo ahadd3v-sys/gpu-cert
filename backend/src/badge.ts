@@ -1,10 +1,10 @@
 import { ImageResponse } from "@vercel/og";
-import type { ReportRow } from "../lib/db";
+import type { ReportRow } from "../lib/db.js";
 import {
   SPACE_GROTESK_WOFF_BADGE_BASE64,
   INTER_400_WOFF_BADGE_BASE64,
   INTER_600_WOFF_BADGE_BASE64,
-} from "./fonts";
+} from "./fonts.js";
 
 // Plain object literals shaped like React elements ({type, props}), not
 // JSX. `@vercel/og`/satori only need the shape — they don't call any real

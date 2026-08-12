@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { assessStressTest } from "./stress-analysis";
+import { assessStressTest } from "./stress-analysis.js";
 
 // Field names match the Rust client's `serde`-serialized struct names
 // exactly (client/src/report.rs) — snake_case, no renaming on either side.

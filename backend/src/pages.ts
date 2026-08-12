@@ -6,9 +6,9 @@
 // without one and its report is public the moment it lands, so nothing on
 // this site may imply signing up is a prerequisite to testing a card — the
 // account only buys you a place where your certificates are collected.
-import { esc } from "./html";
-import { sitePage } from "./theme";
-import type { ReportRow } from "../lib/db";
+import { esc } from "./html.js";
+import { sitePage } from "./theme.js";
+import type { ReportRow } from "../lib/db.js";
 
 const DOWNLOAD_URL = "https://github.com/ahadd3v-sys/gpu-cert/releases/latest/download/gpu-cert.exe";
 

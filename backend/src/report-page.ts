@@ -1,6 +1,6 @@
-import type { ReportRow } from "../lib/db";
-import { esc } from "./html";
-import { FONT_FACE_CSS, TOKENS_CSS, renderEmblem } from "./theme";
+import type { ReportRow } from "../lib/db.js";
+import { esc } from "./html.js";
+import { FONT_FACE_CSS, TOKENS_CSS, renderEmblem } from "./theme.js";
 
 // Hand-written HTML string, not JSX — this is a single static-shaped page
 // with no interactivity beyond the claim form, and skipping JSX means

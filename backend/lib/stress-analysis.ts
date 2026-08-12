@@ -1,4 +1,4 @@
-import type { TelemetrySample } from "./certify";
+import type { TelemetrySample } from "./certify.js";
 
 // Turns the raw per-tick telemetry series from the stress test into a
 // pass/fail-relevant assessment. Previously this telemetry was captured and

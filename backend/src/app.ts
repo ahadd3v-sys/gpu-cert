@@ -13,14 +13,14 @@ import {
   ensureUploadKey,
   generateUploadKey,
   setUploadKey,
-} from "../lib/db";
-import { CertifyRequestSchema, computeVerdict, canonicalReportString } from "../lib/certify";
-import { signReport } from "../lib/signing";
-import { hashPassword, verifyPassword } from "../lib/password";
-import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth";
-import { renderReportPage } from "./report-page";
-import { renderBadge } from "./badge";
-import { renderHome, renderLogin, renderSignup, renderDashboard } from "./pages";
+} from "../lib/db.js";
+import { CertifyRequestSchema, computeVerdict, canonicalReportString } from "../lib/certify.js";
+import { signReport } from "../lib/signing.js";
+import { hashPassword, verifyPassword } from "../lib/password.js";
+import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
+import { renderReportPage } from "./report-page.js";
+import { renderBadge } from "./badge.js";
+import { renderHome, renderLogin, renderSignup, renderDashboard } from "./pages.js";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpu-cert.vercel.app";
 const SESSION_COOKIE_OPTS = {
