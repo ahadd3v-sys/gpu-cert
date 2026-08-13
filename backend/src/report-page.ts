@@ -89,6 +89,27 @@ export interface CertificateViewer {
   loggedIn: boolean;
   emailVerified: boolean;
   justBlocked: boolean;
+  /// Whether the viewer owns this certificate, which is who may add a serial.
+  isOwner: boolean;
+  /// "invalid" or "refused" after a rejected serial submission.
+  serialProblem: string | null;
+}
+
+/// Whether the vendor gave us an identifier that belongs to the card rather
+/// than to the slot it was sitting in.
+///
+/// NVML returns a real per-card UUID, burned in and unchanged wherever the card
+/// goes. AMD has no equivalent: ADL exposes no serial for consumer Radeon, and
+/// Vulkan's deviceUUID is derived from the PCI bus address on both Mesa and
+/// AMDVLK, so it identifies a slot. What we can record for AMD is the model,
+/// memory size and BIOS, which survives a move but describes a production run
+/// rather than one card.
+///
+/// Detected from the shape of the identifier rather than the brand string,
+/// because the thing that matters is whether the identifier is portable, not
+/// who made the GPU.
+function hasPortableCardIdentity(report: ReportRow): boolean {
+  return report.fingerprint_uuid.startsWith("GPU-");
 }
 
 export function renderReportPage(report: ReportRow, viewer: CertificateViewer): string {
@@ -137,6 +158,47 @@ export function renderReportPage(report: ReportRow, viewer: CertificateViewer): 
                <button type="submit" class="claim-button">Save to my account</button>
              </form>`
           : `<p class="claim-prompt">${viewer.justBlocked ? "Confirm your email address first" : "Confirm your email address"} to save this certificate to your account. <a href="/dashboard">Send the link again</a>.</p>`;
+
+  // Kept visually and textually apart from everything above it, because
+  // everything above it was measured by the client and signed, and this was
+  // typed in by a person. Presented as though it were equivalent, it would drag
+  // the credibility of the measured fields down to its own level; presented
+  // honestly, it does something none of them can, which is survive the card
+  // changing hands.
+  //
+  // Optional, always. A card sits in a case with its label facing the
+  // motherboard, so plenty of honest sellers cannot read it without pulling the
+  // machine apart, and a certificate must not be worth less for that.
+  const serialSection = report.serial_number
+    ? `<section class="stated">
+         <p class="section-label">Stated by the seller, not verified by GPU Cert</p>
+         <dl class="spec-grid">
+           <div class="spec-row"><dt>Card Serial</dt><dd>${esc(report.serial_number)}<br><span class="spec-note">Added ${esc(
+             formatDate(report.serial_added_at ?? "")
+           )} by the certificate's owner. Check it against the label on the card itself. It is not part of the signed record above.</span></dd></div>
+         </dl>
+       </section>`
+    : viewer.isOwner
+      ? `<section class="stated">
+           <p class="section-label">Optional: the serial printed on the card</p>
+           <p class="stated-note">${
+             hasPortableCardIdentity(report)
+               ? "Your card already has a per-card identifier above, so this is extra assurance rather than a substitute."
+               : "AMD exposes no per-card identifier, so this is the only field that ties this certificate to one physical card rather than to the model."
+           } A buyer can check it against the label. It can be set once and cannot be changed afterwards, which is what makes it worth anything.</p>
+           ${
+             viewer.serialProblem === "invalid"
+               ? `<p class="stated-error">That does not look like a serial. Letters, digits and dashes only.</p>`
+               : viewer.serialProblem === "refused"
+                 ? `<p class="stated-error">This certificate already has a serial, and it cannot be changed.</p>`
+                 : ""
+           }
+           <form method="post" action="/r/${esc(report.id)}/serial" class="serial-form">
+             <input type="text" name="serial" maxlength="64" placeholder="Serial from the card's label" aria-label="Card serial">
+             <button type="submit">Add serial</button>
+           </form>
+         </section>`
+      : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -239,6 +301,16 @@ ${FAVICON_LINK}
      the body face rather than the monospace one, because it is prose. */
   .spec-note { display: block; margin-top: 3px; font-family: inherit; font-size: 11.5px;
                line-height: 1.45; color: var(--ink-muted); text-align: right; word-break: normal; }
+  /* Set apart from the certificate proper: this is the one block on the page
+     that nobody measured. */
+  .stated { margin: 28px 0 0; padding: 16px 18px; border: 1px dashed var(--paper-deep); }
+  .stated-note, .stated-error { font-size: 12.5px; line-height: 1.5; color: var(--ink-muted); margin: 6px 0 10px; }
+  .stated-error { color: var(--fail); }
+  .serial-form { display: flex; gap: 8px; flex-wrap: wrap; }
+  .serial-form input { flex: 1 1 220px; padding: 8px 10px; border: 1px solid var(--paper-deep);
+                       background: var(--paper); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  .serial-form button { padding: 8px 16px; border: 1px solid var(--ink); background: var(--ink);
+                        color: var(--paper); font-size: 13px; cursor: pointer; }
   .spec-row dt { color: var(--ink-muted); font-weight: normal; }
   .spec-row dd { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; word-break: break-all; padding-left: 20px; }
 
@@ -334,7 +406,11 @@ ${FAVICON_LINK}
         <div class="spec-row"><dt>GPU UUID</dt><dd>${esc(report.fingerprint_uuid)}</dd></div>
         <div class="spec-row"><dt>PCI Device ID</dt><dd>${formatPciId(report.fingerprint_pci_device_id)}</dd></div>
         <div class="spec-row"><dt>VBIOS Version</dt><dd>${esc(report.fingerprint_vbios_version)}</dd></div>
-        <div class="spec-row"><dt>Hardware Fingerprint</dt><dd>${esc(report.fingerprint_hash)}</dd></div>
+        <div class="spec-row"><dt>Hardware Fingerprint</dt><dd>${esc(report.fingerprint_hash)}<br><span class="spec-note">${
+          hasPortableCardIdentity(report)
+            ? "Identifies this individual card. Running the tool on the card again, in any machine, reproduces this."
+            : "Identifies this model, memory size and BIOS, not the individual card. AMD exposes no per-card identifier, so this cannot distinguish two cards of the same model, and it changes if the card moves to another machine."
+        }</span></dd></div>
         <div class="spec-row"><dt>PCIe Link Width</dt><dd>x${report.pcie_link_width_current} of x${report.pcie_link_width_max} max${
           report.pcie_link_width_current < report.pcie_link_width_max
             ? `<br><span class="spec-note">Measured in the testing machine. Usually the motherboard slot or lane sharing rather than the card, and likely to differ in another system.</span>`
@@ -397,7 +473,8 @@ ${FAVICON_LINK}
     </footer>
   </article>
 
-  <div class="page-actions">${claimAction}</div>
+  <div class="page-actions">${claimAction}
+    ${serialSection}</div>
   <p class="report-id-footer">Report ID: ${esc(report.id)}</p>
 </main>
 </body>

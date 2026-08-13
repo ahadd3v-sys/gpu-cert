@@ -188,6 +188,11 @@ const MIGRATIONS = [
   // client, reproduced on the server.
   `ALTER TABLE test_sessions ADD COLUMN rejected_at TEXT`,
   `ALTER TABLE test_sessions ADD COLUMN rejection TEXT`,
+  // The serial printed on the card's own label, typed in by whoever owns the
+  // certificate. Deliberately not part of the signed record: everything the
+  // signature covers was measured by the client, and this was not.
+  `ALTER TABLE reports ADD COLUMN serial_number TEXT`,
+  `ALTER TABLE reports ADD COLUMN serial_added_at TEXT`,
 ];
 
 // Order matters, and getting it wrong takes the whole site down rather than
@@ -231,6 +236,8 @@ export async function ensureSchema() {
 export interface ReportRow {
   id: string;
   user_id: string | null;
+  serial_number: string | null;
+  serial_added_at: string | null;
   client_version: string;
   device_name: string;
   fingerprint_uuid: string;
@@ -270,7 +277,7 @@ const REPORT_COLUMNS = `id, user_id, client_version, device_name, fingerprint_uu
                  stress_peak_temp_c, stress_thermally_stable, stress_clock_stability_pct, stress_aborted_for_safety,
                  vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety, vram_diagnostics,
                  fur_frames_rendered, fur_duration_ms, fur_mismatches, fur_pixels_checked, fur_aborted_for_safety,
-                 signature, created_at`;
+                 signature, created_at, serial_number, serial_added_at`;
 
 export async function getReportById(id: string): Promise<ReportRow | null> {
   await ensureSchema();
@@ -512,6 +519,31 @@ export async function recordSessionProgress(
 /// described second-hand as "it got stuck".
 /// Records why a submission was refused, against the session it was refused
 /// for. Never returned to the client; see the migration for why.
+/// Sets the card's printed serial, once, for the account that owns the
+/// certificate.
+///
+/// Write-once on purpose. If it could be changed, a seller could certify a good
+/// card, sell a different one, and edit the serial to match, which is precisely
+/// the swap the field exists to make harder. The `serial_number IS NULL` clause
+/// is what enforces it, in the statement rather than in a prior read, so two
+/// racing requests cannot both win.
+///
+/// Returns false if the report does not exist, is not owned by this user, or
+/// already has one.
+export async function setReportSerial(
+  reportId: string,
+  userId: string,
+  serial: string
+): Promise<boolean> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `UPDATE reports SET serial_number = ?, serial_added_at = ?
+          WHERE id = ? AND user_id = ? AND serial_number IS NULL`,
+    args: [serial, new Date().toISOString(), reportId, userId],
+  });
+  return res.rowsAffected > 0;
+}
+
 export async function recordSessionRejection(
   id: string,
   problems: string[]

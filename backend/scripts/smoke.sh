@@ -327,7 +327,32 @@ check "the certificate page says why" \
 
 kit set-verified unverified@example.com 1 >/dev/null
 curl -s -b "$SCRATCH/unv" -o /dev/null -X POST "http://localhost:3111/r/$PASS_ID/claim"
+# Optional, owner-only, write-once. The one field on a certificate that nobody
+# measured, so it has to be visibly separated from the ones that were.
+check "a stranger is not offered the serial field" \
+  "$(curl -s "http://localhost:3111/r/$FAIL_ID" | grep -q 'name="serial"' && echo 0 || echo 1)"
+
 check "a verified account can claim it" "$([ "$(kit owner-of "$PASS_ID")" != "none" ] && echo 1 || echo 0)"
+
+# The owner now sees the field, and the write-once rule is the only thing that
+# makes the serial worth reading: if it could be edited, a seller could certify
+# one card, ship another, and update the serial to match.
+check "the owner is offered the serial field" \
+  "$(curl -s -b "$SCRATCH/unv" "http://localhost:3111/r/$PASS_ID" | grep -q 'name="serial"' && echo 1 || echo 0)"
+curl -s -b "$SCRATCH/unv" -o /dev/null -X POST "http://localhost:3111/r/$PASS_ID/serial" --data-urlencode "serial=rx6600-abc123"
+SERIALPAGE=$(curl -s "http://localhost:3111/r/$PASS_ID")
+check "the serial is stored and shown" "$(has "$SERIALPAGE" "RX6600-ABC123")"
+check "it is labelled as unverified rather than measured" "$(has "$SERIALPAGE" "not verified by GPU Cert")"
+curl -s -b "$SCRATCH/unv" -o /dev/null -X POST "http://localhost:3111/r/$PASS_ID/serial" --data-urlencode "serial=different-serial"
+check "a serial cannot be changed once set" \
+  "$(has "$(curl -s "http://localhost:3111/r/$PASS_ID")" "RX6600-ABC123")"
+check "garbage is refused" \
+  "$(curl -s -b "$SCRATCH/unv" -o /dev/null -w '%{redirect_url}' -X POST "http://localhost:3111/r/$FAIL_ID/serial" --data-urlencode "serial=<script>" | grep -q "serial=" && echo 1 || echo 0)"
+
+# The claim the fingerprint can actually support, stated per vendor rather than
+# implied. The fixture is an AMD card, which is the weaker of the two.
+check "an AMD certificate says the fingerprint is model-level" \
+  "$(has "$SERIALPAGE" "not the individual card")"
 # No provider is configured in the smoke run, so an account that could never be
 # verified is created verified rather than nagged forever.
 check "unverifiable accounts aren't left unverified" "$([ "$(kit verified owner@example.com)" = "1" ] && echo 1 || echo 0)"

@@ -24,6 +24,7 @@ import {
   recordSessionProgress,
   recordSessionFailure,
   recordSessionRejection,
+  setReportSerial,
   consumeTestSession,
   countRecentSessions,
   createFeedback,
@@ -479,6 +480,8 @@ app.get("/r/:reportId", async (c) => {
       emailVerified: viewer?.email_verified === 1,
       // Set when a claim was just refused for want of a confirmed address.
       justBlocked: c.req.query("verify") === "1",
+      isOwner: viewerUserId !== null && report.user_id === viewerUserId,
+      serialProblem: c.req.query("serial") ?? null,
     })
   );
 });
@@ -508,6 +511,34 @@ app.post("/r/:reportId/claim", async (c) => {
 
   await claimReport(c.req.param("reportId"), userId);
   return c.redirect(`/r/${c.req.param("reportId")}`);
+});
+
+// A serial cannot be read off an installed card: it is on a label facing the
+// motherboard, inside a case. So this is entered here, later, when the seller
+// is listing the card and can see the label or the box, rather than by the exe
+// mid-run.
+//
+// Owner-only and write-once. See setReportSerial for why editing must not be
+// possible.
+const MAX_SERIAL_LENGTH = 64;
+
+app.post("/r/:reportId/serial", async (c) => {
+  const reportId = c.req.param("reportId");
+  const userId = await getSessionUserId(c);
+  if (!userId) return c.redirect(`/login?next=/r/${reportId}`);
+
+  const form = await c.req.parseBody();
+  const raw = typeof form.serial === "string" ? form.serial.trim() : "";
+  // Printed serials are alphanumeric with the occasional dash. Anything else is
+  // a paste accident or an injection attempt, and neither belongs on a document
+  // a stranger is meant to trust.
+  const serial = raw.replace(/\s+/g, "").toUpperCase();
+  if (!/^[A-Z0-9-]{4,64}$/.test(serial)) {
+    return c.redirect(`/r/${reportId}?serial=invalid`);
+  }
+
+  const ok = await setReportSerial(reportId, userId, serial.slice(0, MAX_SERIAL_LENGTH));
+  return c.redirect(`/r/${reportId}${ok ? "" : "?serial=refused"}`);
 });
 
 // The certificate's whole value to a buyer is that they don't have to take
