@@ -76,6 +76,10 @@ signup a prerequisite to testing a card.
   badge image, a `/verify` surface (see below), and a `/dashboard` that is
   both the register of a user's certificates and where their upload key
   lives.
+- `backend/src/theme.ts` — the shared visual language: palette tokens, the
+  embedded Fraunces face, the letterhead masthead, and the page shell. Both
+  `report-page.ts` and `pages.ts` import from here, so the palette is defined
+  once.
 
 ## Attestation
 
@@ -122,10 +126,6 @@ detected.
 The page is also explicit about what a valid signature does *not* prove: that
 the person showing it owns the card. That is what the hardware fingerprint on
 the certificate is for.
-- `backend/src/theme.ts` — the shared visual language: palette tokens, the
-  embedded Fraunces face, the letterhead masthead, and the page shell. Both
-  `report-page.ts` and `pages.ts` import from here, so the palette is defined
-  once.
 
 ## Verification protocol
 
