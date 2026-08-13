@@ -7,13 +7,15 @@
 // instead. That keeps the scripts exercising the real ingest path, including
 // every attestation check, rather than a weakened version of it.
 import { createClient } from "@libsql/client";
+import { createEmailToken } from "../lib/db.js";
 
 const [command, ...args] = process.argv.slice(2);
-const db = createClient({ url: process.env.DATABASE_URL });
+const db_url = process.env.DATABASE_URL as string;
+const db = createClient({ url: db_url });
 
 const BASE = process.env.SMOKE_BASE ?? "http://localhost:3111";
 
-async function startSession(fingerprintHash) {
+async function startSession(fingerprintHash: string) {
   const res = await fetch(`${BASE}/api/session/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -24,7 +26,7 @@ async function startSession(fingerprintHash) {
     }),
   });
   if (!res.ok) throw new Error(`session start failed: ${res.status}`);
-  return res.json();
+  return (await res.json()) as { session_id: string; nonce: string };
 }
 
 switch (command) {
@@ -55,6 +57,28 @@ switch (command) {
     if (!/^[a-z_]+$/.test(column)) throw new Error("bad column");
     await db.execute({ sql: `UPDATE reports SET ${column} = ? WHERE id = ?`, args: [value, id] });
     process.stdout.write("ok");
+    break;
+  }
+  case "user-id": {
+    const res = await db.execute({ sql: "SELECT id FROM users WHERE email = ?", args: [args[0]] });
+    process.stdout.write(String(res.rows[0]?.id ?? ""));
+    break;
+  }
+  case "set-verified": {
+    await db.execute({ sql: "UPDATE users SET email_verified = ? WHERE email = ?", args: [Number(args[1]), args[0]] });
+    process.stdout.write("ok");
+    break;
+  }
+  case "verified": {
+    const res = await db.execute({ sql: "SELECT email_verified FROM users WHERE email = ?", args: [args[0]] });
+    process.stdout.write(String(res.rows[0]?.email_verified ?? ""));
+    break;
+  }
+  // Mints a real token through the same code path the app uses. The raw token
+  // only ever exists in the email, so a test that needs to click a link has to
+  // issue its own.
+  case "token": {
+    process.stdout.write(await createEmailToken(args[0], args[1] as "verify" | "reset", 60));
     break;
   }
   default:

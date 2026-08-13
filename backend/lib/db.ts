@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { createClient, type Client } from "@libsql/client";
 
 let client: Client | null = null;
@@ -25,6 +26,19 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   upload_key TEXT UNIQUE,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Single-use links for confirming an address and for resetting a password.
+-- Only a hash of each token is stored: the token itself lives in the email and
+-- nowhere else, so a copy of this table grants nobody a password reset.
+CREATE TABLE IF NOT EXISTS email_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -95,6 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_reports_fingerprint_hash ON reports (fingerprint_
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports (user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_ip ON test_sessions (ip_hash, started_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback (created_at);
+CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens (user_id, kind);
 
 -- Enforces upload_key uniqueness on DBs where the column arrived via ALTER
 -- (SQLite can't add a UNIQUE column in place). A unique index permits
@@ -108,7 +123,13 @@ let initialized = false;
 // exists, so anything added to SCHEMA after a DB has been created needs a
 // matching ALTER here. Each runs inside its own try: "duplicate column name"
 // is the expected outcome on an already-migrated DB, not a failure.
-const MIGRATIONS = [`ALTER TABLE users ADD COLUMN upload_key TEXT`];
+const MIGRATIONS = [
+  `ALTER TABLE users ADD COLUMN upload_key TEXT`,
+  // Existing accounts predate verification. They are marked verified rather
+  // than locked out of their own certificates by a feature added after they
+  // signed up.
+  `ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1`,
+];
 
 export async function ensureSchema() {
   if (initialized) return;
@@ -238,10 +259,11 @@ export interface UserRow {
   email: string;
   password_hash: string;
   upload_key: string | null;
+  email_verified: number;
   created_at: string;
 }
 
-const USER_COLUMNS = `id, email, password_hash, upload_key, created_at`;
+const USER_COLUMNS = `id, email, password_hash, upload_key, email_verified, created_at`;
 
 // Read aloud off a dashboard and typed into a console prompt, so the alphabet
 // drops the four glyph pairs that get mistyped that way (I/1, O/0) and the
@@ -256,19 +278,23 @@ export function generateUploadKey(): string {
   return `GPUC-${groups.join("-")}`;
 }
 
-export async function createUser(email: string, passwordHash: string): Promise<UserRow> {
+/// `verified` is true when there is no way to send a confirmation email, since
+/// marking an account unverified that can never be verified would just be a
+/// permanent banner nobody can dismiss.
+export async function createUser(email: string, passwordHash: string, verified: boolean): Promise<UserRow> {
   await ensureSchema();
   const id = crypto.randomUUID();
   const uploadKey = generateUploadKey();
   await db().execute({
-    sql: `INSERT INTO users (id, email, password_hash, upload_key) VALUES (?, ?, ?, ?)`,
-    args: [id, email, passwordHash, uploadKey],
+    sql: `INSERT INTO users (id, email, password_hash, upload_key, email_verified) VALUES (?, ?, ?, ?, ?)`,
+    args: [id, email, passwordHash, uploadKey, verified ? 1 : 0],
   });
   return {
     id,
     email,
     password_hash: passwordHash,
     upload_key: uploadKey,
+    email_verified: verified ? 1 : 0,
     created_at: new Date().toISOString(),
   };
 }
@@ -429,4 +455,68 @@ export async function countRecentFeedback(ipHash: string, sinceIso: string): Pro
     args: [ipHash, sinceIso],
   });
   return Number((res.rows[0] as unknown as { n: number }).n);
+}
+
+// ------------------------------------------------------- email tokens
+
+export type EmailTokenKind = "verify" | "reset";
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+/// Returns the raw token, which is the only copy. It goes in the email and is
+/// never written down here.
+export async function createEmailToken(
+  userId: string,
+  kind: EmailTokenKind,
+  ttlMinutes: number
+): Promise<string> {
+  await ensureSchema();
+  const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+  // Any older token of the same kind stops working the moment a new one is
+  // issued, so "resend" cannot leave a trail of live links behind it.
+  await db().execute({
+    sql: `DELETE FROM email_tokens WHERE user_id = ? AND kind = ?`,
+    args: [userId, kind],
+  });
+  await db().execute({
+    sql: `INSERT INTO email_tokens (token_hash, user_id, kind, expires_at) VALUES (?, ?, ?, ?)`,
+    args: [hashToken(token), userId, kind, new Date(Date.now() + ttlMinutes * 60_000).toISOString()],
+  });
+  return token;
+}
+
+/// Atomically spends a token, returning the user id it belonged to. The
+/// single-use guarantee is the conditional UPDATE rather than a read followed
+/// by a write, so two clicks on one reset link cannot both succeed.
+export async function consumeEmailToken(
+  token: string,
+  kind: EmailTokenKind
+): Promise<string | null> {
+  await ensureSchema();
+  const now = new Date().toISOString();
+  const res = await db().execute({
+    sql: `UPDATE email_tokens SET used_at = ?
+          WHERE token_hash = ? AND kind = ? AND used_at IS NULL AND expires_at > ?
+          RETURNING user_id`,
+    args: [now, hashToken(token), kind, now],
+  });
+  const row = res.rows[0] as unknown as { user_id: string } | undefined;
+  return row?.user_id ?? null;
+}
+
+export async function markEmailVerified(userId: string): Promise<void> {
+  await ensureSchema();
+  await db().execute({ sql: `UPDATE users SET email_verified = 1 WHERE id = ?`, args: [userId] });
+}
+
+export async function setPassword(userId: string, passwordHash: string): Promise<void> {
+  await ensureSchema();
+  await db().execute({
+    sql: `UPDATE users SET password_hash = ? WHERE id = ?`,
+    args: [passwordHash, userId],
+  });
 }

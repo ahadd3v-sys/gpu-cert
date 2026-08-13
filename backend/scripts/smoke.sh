@@ -38,7 +38,7 @@ done
 pass=0; fail=0
 check() { if [ "$2" = "1" ]; then echo "  ok    $1"; pass=$((pass+1)); else echo "  FAIL  $1"; fail=$((fail+1)); fi; }
 has()   { grep -qF "$2" <<<"$1" && echo 1 || echo 0; }
-kit()   { node scripts/testkit.mjs "$@"; }
+kit()   { npx tsx scripts/testkit.ts "$@"; }
 
 FP="c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
 
@@ -147,6 +147,46 @@ curl -s -o /dev/null -X POST http://localhost:3111/feedback \
 check "honeypot submissions are dropped" "$([ "$(kit count feedback)" = "1" ] && echo 1 || echo 0)"
 curl -s -o /dev/null -X POST http://localhost:3111/feedback --data-urlencode "message=short"
 check "too-short feedback is refused" "$([ "$(kit count feedback)" = "1" ] && echo 1 || echo 0)"
+
+echo ""
+echo "accounts:"
+curl -s -c "$SCRATCH/jar" -o /dev/null -X POST http://localhost:3111/signup \
+  --data-urlencode "email=owner@example.com" --data-urlencode "password=correcthorse1"
+check "signup creates an account" "$([ -n "$(kit user-id owner@example.com)" ] && echo 1 || echo 0)"
+# No provider is configured in the smoke run, so an account that could never be
+# verified is created verified rather than nagged forever.
+check "unverifiable accounts aren't left unverified" "$([ "$(kit verified owner@example.com)" = "1" ] && echo 1 || echo 0)"
+
+UID_=$(kit user-id owner@example.com)
+# Forced back to unverified so the confirmation flow itself can be exercised
+# even though this run has no mail provider.
+kit set-verified owner@example.com 0 >/dev/null
+VTOK=$(kit token "$UID_" verify)
+curl -s -o /dev/null "http://localhost:3111/verify-email?token=$VTOK"
+check "a verification link confirms the address" "$([ "$(kit verified owner@example.com)" = "1" ] && echo 1 || echo 0)"
+check "the same link cannot be used twice" \
+  "$(has "$(curl -s "http://localhost:3111/verify-email?token=$VTOK")" "That link has expired")"
+check "a made-up verification token is refused" \
+  "$(has "$(curl -s "http://localhost:3111/verify-email?token=deadbeef")" "That link has expired")"
+
+# The reply must not differ between a real address and an unknown one, or the
+# form becomes a way to discover who has an account here.
+KNOWN=$(curl -s -X POST http://localhost:3111/forgot-password --data-urlencode "email=owner@example.com")
+UNKNOWN=$(curl -s -X POST http://localhost:3111/forgot-password --data-urlencode "email=nobody@example.com")
+check "password reset does not reveal whether an account exists" \
+  "$([ "$(md5sum <<<"$KNOWN" | cut -d" " -f1)" = "$(md5sum <<<"$UNKNOWN" | cut -d" " -f1)" ] && echo 1 || echo 0)"
+
+RTOK=$(kit token "$UID_" reset)
+curl -s -o /dev/null -X POST http://localhost:3111/reset-password \
+  --data-urlencode "token=$RTOK" --data-urlencode "password=brandnewpass9"
+LOGIN=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3111/login \
+  --data-urlencode "email=owner@example.com" --data-urlencode "password=brandnewpass9")
+check "the new password works" "$([ "$LOGIN" = "302" ] && echo 1 || echo 0)"
+OLD=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3111/login \
+  --data-urlencode "email=owner@example.com" --data-urlencode "password=correcthorse1")
+check "the old password stops working" "$([ "$OLD" = "401" ] && echo 1 || echo 0)"
+check "a spent reset link cannot be reused" \
+  "$(has "$(curl -s -X POST http://localhost:3111/reset-password --data-urlencode "token=$RTOK" --data-urlencode "password=another12345")" "expired or was already used")"
 
 echo ""
 echo "$pass passed, $fail failed"

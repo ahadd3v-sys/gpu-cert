@@ -10,7 +10,7 @@ async function main() {
   await ensureSchema();
 
   let user = await getUserByEmail(EMAIL);
-  if (!user) user = await createUser(EMAIL, hashPassword(PASSWORD));
+  if (!user) user = await createUser(EMAIL, hashPassword(PASSWORD), true);
 
   await db().execute({ sql: `DELETE FROM reports WHERE user_id = ? OR user_id IS NULL`, args: [user.id] });
 

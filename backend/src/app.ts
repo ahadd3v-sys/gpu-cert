@@ -20,6 +20,10 @@ import {
   countRecentSessions,
   createFeedback,
   countRecentFeedback,
+  createEmailToken,
+  consumeEmailToken,
+  markEmailVerified,
+  setPassword,
   ensureUploadKey,
   generateUploadKey,
   setUploadKey,
@@ -31,12 +35,13 @@ import {
   canonicalReportStringFromRow,
 } from "../lib/certify.js";
 import { checkSubmission } from "../lib/attestation.js";
+import { isEmailConfigured, sendEmail, verificationEmail, passwordResetEmail } from "../lib/email.js";
 import { signReport, verifyReportSignature } from "../lib/signing.js";
 import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/password.js";
 import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
 import { renderReportPage } from "./report-page.js";
 import { renderBadge } from "./badge.js";
-import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback } from "./pages.js";
+import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback, renderNotice, renderForgotPassword, renderResetPassword } from "./pages.js";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpu-cert.vercel.app";
 const SESSION_COOKIE_OPTS = {
@@ -468,12 +473,20 @@ app.post("/signup", async (c) => {
   // signups for the same address both pass it. The UNIQUE index is what
   // actually enforces it, so its rejection is handled as the same user-facing
   // outcome rather than surfacing as a 500.
+  // Created already-verified when there is no provider to send through, since
+  // an unverified state nobody can ever leave is just a permanent banner.
   let user;
   try {
-    user = await createUser(email, hashPassword(password));
+    user = await createUser(email, hashPassword(password), !isEmailConfigured());
   } catch {
     return c.html(renderSignup(next, "An account with that email already exists"), 409);
   }
+
+  if (isEmailConfigured()) {
+    const verifyToken = await createEmailToken(user.id, "verify", 24 * 60);
+    await sendEmail({ to: user.email, ...verificationEmail(BASE_URL, verifyToken) });
+  }
+
   const token = await createSessionToken(user.id);
   setCookie(c, COOKIE_NAME, token, SESSION_COOKIE_OPTS);
   return c.redirect(next || "/dashboard");
@@ -482,6 +495,91 @@ app.post("/signup", async (c) => {
 app.post("/logout", (c) => {
   deleteCookie(c, COOKIE_NAME, { path: "/" });
   return c.redirect("/");
+});
+
+// Confirming an address, and recovering one. Both hang off the same
+// single-use token table; see lib/db.ts.
+app.get("/verify-email", async (c) => {
+  const token = c.req.query("token") ?? "";
+  const userId = token ? await consumeEmailToken(token, "verify") : null;
+  if (!userId) {
+    return c.html(
+      renderNotice({
+        loggedIn: (await getSessionUserId(c)) !== null,
+        title: "That link has expired",
+        body: "Verification links last 24 hours and work once. Sign in and request a new one from your dashboard.",
+        ok: false,
+      }),
+      400
+    );
+  }
+  await markEmailVerified(userId);
+  return c.html(
+    renderNotice({
+      loggedIn: (await getSessionUserId(c)) !== null,
+      title: "Email confirmed",
+      body: "Your address is verified. You can reset your password with it if you ever need to.",
+      ok: true,
+    })
+  );
+});
+
+app.post("/resend-verification", async (c) => {
+  const userId = await getSessionUserId(c);
+  if (!userId) return c.redirect("/login?next=/dashboard");
+  const user = await getUserById(userId);
+  if (user && user.email_verified !== 1 && isEmailConfigured()) {
+    const token = await createEmailToken(user.id, "verify", 24 * 60);
+    await sendEmail({ to: user.email, ...verificationEmail(BASE_URL, token) });
+  }
+  return c.redirect("/dashboard?sent=1");
+});
+
+app.get("/forgot-password", (c) => c.html(renderForgotPassword({})));
+
+app.post("/forgot-password", async (c) => {
+  const form = await c.req.parseBody();
+  const email = String(form.email ?? "").trim().toLowerCase();
+  const user = await getUserByEmail(email);
+
+  // Always the same answer, whether or not that address has an account.
+  // Anything else turns this form into a way to test which emails are
+  // registered here.
+  if (user && isEmailConfigured()) {
+    const token = await createEmailToken(user.id, "reset", 60);
+    await sendEmail({ to: user.email, ...passwordResetEmail(BASE_URL, token) });
+  }
+  return c.html(renderForgotPassword({ sent: true, emailConfigured: isEmailConfigured() }));
+});
+
+app.get("/reset-password", (c) => c.html(renderResetPassword({ token: c.req.query("token") ?? "" })));
+
+app.post("/reset-password", async (c) => {
+  const form = await c.req.parseBody();
+  const token = String(form.token ?? "");
+  const password = String(form.password ?? "");
+  if (password.length < 8) {
+    return c.html(
+      renderResetPassword({ token, error: "Password must be at least 8 characters" }),
+      400
+    );
+  }
+
+  const userId = await consumeEmailToken(token, "reset");
+  if (!userId) {
+    return c.html(
+      renderResetPassword({ token: "", error: "That reset link has expired or was already used." }),
+      400
+    );
+  }
+  await setPassword(userId, hashPassword(password));
+  // Reaching a reset link proves control of the address, so this doubles as
+  // verification and saves the user a second round trip.
+  await markEmailVerified(userId);
+
+  const session = await createSessionToken(userId);
+  setCookie(c, COOKIE_NAME, session, SESSION_COOKIE_OPTS);
+  return c.redirect("/dashboard");
 });
 
 app.get("/dashboard", async (c) => {
@@ -497,7 +595,13 @@ app.get("/dashboard", async (c) => {
   }
 
   const [reports, uploadKey] = await Promise.all([getReportsForUser(userId), ensureUploadKey(user)]);
-  return c.html(renderDashboard(reports, user.email, uploadKey));
+  return c.html(
+    renderDashboard(reports, user.email, uploadKey, {
+      emailVerified: user.email_verified === 1,
+      verificationSent: c.req.query("sent") === "1",
+      canResend: isEmailConfigured(),
+    })
+  );
 });
 
 app.post("/dashboard/key/rotate", async (c) => {

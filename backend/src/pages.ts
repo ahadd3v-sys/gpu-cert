@@ -352,7 +352,20 @@ const DASHBOARD_CSS = `
   }
 `;
 
-export function renderDashboard(reports: ReportRow[], email: string, uploadKey: string): string {
+export interface DashboardEmailState {
+  emailVerified: boolean;
+  verificationSent: boolean;
+  /// False when no provider is configured, in which case there is nothing to
+  /// resend and saying so beats a button that silently does nothing.
+  canResend: boolean;
+}
+
+export function renderDashboard(
+  reports: ReportRow[],
+  email: string,
+  uploadKey: string,
+  emailState: DashboardEmailState
+): string {
   const register = reports.length
     ? `<table class="register">
          <thead>
@@ -386,11 +399,34 @@ export function renderDashboard(reports: ReportRow[], email: string, uploadKey: 
          <a class="btn" href="${DOWNLOAD_URL}">Test your GPU</a>
        </div>`;
 
+  // Shown rather than enforced. An account is optional here and its
+  // certificates are public either way, so locking the dashboard behind a
+  // click in an inbox would cost a real user more than it costs an abusive
+  // one. What verification actually buys is a working password reset, which
+  // is what this says.
+  const verifyBanner = emailState.emailVerified
+    ? ""
+    : emailState.verificationSent
+      ? `<p class="notice-info">Confirmation sent to ${esc(email)}. Check your inbox, and your spam folder.</p>`
+      : emailState.canResend
+        ? `<div class="notice-info">
+             <span>Your email is not confirmed yet, so you could not reset your password if you forgot it.</span>
+             <form method="post" action="/resend-verification"><button type="submit" class="btn btn-quiet">Send the link again</button></form>
+           </div>`
+        : "";
+
   return sitePage({
     title: "My certificates",
     nav: loggedInNav(),
-    css: DASHBOARD_CSS,
+    css: `${DASHBOARD_CSS}
+      .notice-info {
+        display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+        border-left: 3px solid var(--mark); background: rgba(20, 18, 15, 0.05);
+        font-size: 13.5px; padding: 10px 14px; margin: 0 0 20px;
+      }
+      .notice-info form { margin: 0; }`,
     body: `
+    ${verifyBanner}
     <div class="dash-head">
       <div>
         <p class="eyebrow">Register of issued certificates</p>
@@ -614,5 +650,98 @@ export function renderFeedback(opts: {
     <p class="feedback-alt">
       The whole client and server are open source. If you would rather file a bug where you can watch it get fixed, or you want to read exactly what the tool does to your card before running it, that is all at <a href="${esc(REPO_URL)}">${esc(REPO_URL.replace("https://", ""))}</a>.
     </p>`,
+  });
+}
+
+// ------------------------------------------------- notices and recovery
+
+const NOTICE_CSS = `
+  .notice-head { margin-bottom: 18px; }
+  .notice-body { color: var(--ink-muted); font-size: 15px; line-height: 1.7; margin: 0 0 22px; max-width: 54ch; }
+`;
+
+export function renderNotice(opts: {
+  loggedIn: boolean;
+  title: string;
+  body: string;
+  ok: boolean;
+}): string {
+  return sitePage({
+    title: opts.title,
+    nav: opts.loggedIn ? loggedInNav() : loggedOutNav(),
+    width: 620,
+    css: NOTICE_CSS,
+    body: `
+    <div class="notice-head">
+      <p class="eyebrow">${opts.ok ? "Confirmed" : "Link expired"}</p>
+      <h1 class="display" style="font-size: 30px;">${esc(opts.title)}</h1>
+    </div>
+    <p class="notice-body">${esc(opts.body)}</p>
+    <a class="btn" href="${opts.loggedIn ? "/dashboard" : "/login"}">${opts.loggedIn ? "Go to my certificates" : "Log in"}</a>`,
+  });
+}
+
+export function renderForgotPassword(opts: {
+  sent?: boolean;
+  error?: string;
+  emailConfigured?: boolean;
+}): string {
+  // The confirmation is identical whether or not that address has an account,
+  // so this form can't be used to find out who has one.
+  const confirmation = opts.sent
+    ? `<p class="notice-pass">If there is an account for that address, a reset link is on its way. It works once and lasts an hour.</p>
+       ${opts.emailConfigured === false ? `<p class="field-hint">Email delivery is not configured on this deployment yet, so no message was actually sent.</p>` : ""}`
+    : "";
+  return sitePage({
+    title: "Reset password",
+    nav: loggedOutNav(),
+    width: 470,
+    css: `${AUTH_CSS}
+      .notice-pass { border-left: 3px solid var(--pass); background: rgba(63, 108, 79, 0.07); color: var(--pass); font-size: 13.5px; padding: 9px 14px; margin: 0 0 20px; }`,
+    body: `
+    <div class="auth-head">
+      <p class="eyebrow">Reset password</p>
+      <h1 class="display" style="font-size: 27px; margin-bottom: 10px;">Get back into your account.</h1>
+      <p class="statement" style="margin-bottom: 0; font-size: 14px;">Enter the address you signed up with and we will send a link to set a new password.</p>
+    </div>
+    ${confirmation}
+    ${opts.error ? `<p class="notice-fail">${esc(opts.error)}</p>` : ""}
+    <form method="post" action="/forgot-password">
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" autocomplete="email" required>
+      </div>
+      <button type="submit" class="btn">Send reset link</button>
+    </form>
+    <p class="auth-alt">Remembered it? <a href="/login">Log in</a>.</p>
+    <p class="auth-skip">Your certificates stay public and verifiable either way. An account only collects them in one place.</p>`,
+  });
+}
+
+export function renderResetPassword(opts: { token: string; error?: string }): string {
+  return sitePage({
+    title: "Choose a new password",
+    nav: loggedOutNav(),
+    width: 470,
+    css: AUTH_CSS,
+    body: `
+    <div class="auth-head">
+      <p class="eyebrow">Reset password</p>
+      <h1 class="display" style="font-size: 27px; margin-bottom: 10px;">Choose a new password.</h1>
+    </div>
+    ${opts.error ? `<p class="notice-fail">${esc(opts.error)}</p>` : ""}
+    ${
+      opts.token
+        ? `<form method="post" action="/reset-password">
+             <input type="hidden" name="token" value="${esc(opts.token)}">
+             <div class="field">
+               <label for="password">New password</label>
+               <input id="password" type="password" name="password" minlength="8" autocomplete="new-password" required>
+               <p class="field-hint">At least 8 characters.</p>
+             </div>
+             <button type="submit" class="btn">Set password</button>
+           </form>`
+        : `<p class="auth-alt"><a href="/forgot-password">Request a new reset link</a>.</p>`
+    }`,
   });
 }

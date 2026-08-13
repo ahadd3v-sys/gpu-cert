@@ -52,8 +52,8 @@ FAIL=$(sed -e 's/"total_errors":0/"total_errors":48213/' -e 's/"mismatches":0/"m
 FP=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).fingerprint.hash)" "$PASS")
 
 post() {
-  read -r sid nonce <<<"$(node scripts/testkit.mjs start "$FP")"
-  node scripts/testkit.mjs backdate "$sid" 1000 9 >/dev/null
+  read -r sid nonce <<<"$(npx tsx scripts/testkit.ts start "$FP")"
+  npx tsx scripts/testkit.ts backdate "$sid" 1000 9 >/dev/null
   local body
   body=$(node -e '
     const r = JSON.parse(process.argv[1]);
