@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { z } from "zod";
+import { isSupportedClient, MIN_CLIENT_VERSION, UPGRADE_MESSAGE } from "../lib/client-version.js";
 import { Hono, type Context } from "hono";
 import { setCookie, deleteCookie } from "hono/cookie";
 import {
@@ -169,6 +170,12 @@ app.post("/api/session/start", async (c) => {
     return c.json({ error: "invalid session request" }, 400);
   }
 
+  // Checked here rather than only at submission so an outdated client is
+  // turned away in the first second instead of after a full test run.
+  if (!isSupportedClient(parsed.data.client_version)) {
+    return c.json({ error: UPGRADE_MESSAGE, minimum_client_version: MIN_CLIENT_VERSION }, 426);
+  }
+
   const ipHash = hashIp(c);
   if ((await countRecentSessions(ipHash, isoMinutesAgo(60))) >= MAX_SESSIONS_PER_IP_PER_HOUR) {
     return c.json({ error: "too many test sessions started recently" }, 429);
@@ -259,14 +266,11 @@ app.post("/api/certify", async (c) => {
 
   await ensureSchema();
 
-  if (!req.attestation) {
-    return c.json(
-      {
-        error:
-          "this version of gpu-cert can no longer file certificates. Download the current release and run the test again.",
-      },
-      426
-    );
+  // Two gates that used to be one. The version floor is the real rule; the
+  // attestation check stays because a current-version client that somehow
+  // omits it still cannot be trusted to have run the test it is claiming.
+  if (!isSupportedClient(req.client_version) || !req.attestation) {
+    return c.json({ error: UPGRADE_MESSAGE, minimum_client_version: MIN_CLIENT_VERSION }, 426);
   }
 
   const session = await getTestSession(req.attestation.session_id, req.attestation.nonce);

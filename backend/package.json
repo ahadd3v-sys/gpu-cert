@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/dev.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/check-signing.ts && tsx scripts/check-migrations.ts",
+    "test": "tsx scripts/check-signing.ts && tsx scripts/check-migrations.ts && tsx scripts/check-client-version.ts",
     "smoke": "bash scripts/smoke.sh",
     "check": "npm run typecheck && npm test",
     "gen-signing-key": "tsx scripts/gen-signing-key.ts"

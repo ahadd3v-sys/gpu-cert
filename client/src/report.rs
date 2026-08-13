@@ -397,10 +397,21 @@ pub fn start_session(
         .map_err(|e| anyhow::anyhow!("couldn't reach the backend to start a test session: {e}"))?;
 
     if !resp.status().is_success() {
-        anyhow::bail!(
-            "backend refused to start a test session: HTTP {}. Check your connection and try again.",
-            resp.status()
-        );
+        let status = resp.status();
+        // The backend's own words when it has them. A version floor returns
+        // 426 with an explanation of what to download, and printing only the
+        // status code would turn that into an unactionable number.
+        let detail = resp
+            .json::<serde_json::Value>()
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+        match detail {
+            Some(message) => anyhow::bail!("{message}"),
+            None => anyhow::bail!(
+                "backend refused to start a test session: HTTP {status}. \
+                 Check your connection and try again."
+            ),
+        }
     }
 
     let raw: RawSession = resp

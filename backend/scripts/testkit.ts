@@ -20,7 +20,7 @@ async function startSession(fingerprintHash: string) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      client_version: "test",
+      client_version: "0.5.1",
       device_name: "AMD Radeon RX 6600",
       fingerprint_hash: fingerprintHash,
     }),

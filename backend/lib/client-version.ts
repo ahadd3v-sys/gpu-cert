@@ -1,0 +1,56 @@
+//! Which client releases the backend still accepts.
+//!
+//! Until now "is this client too old" was answered by a side effect: the
+//! certify route rejected anything that didn't send an attestation, and only
+//! releases from v0.4.0 send one. That drew the line wherever a field happened
+//! to be introduced rather than where it belongs, and it let v0.4.0 keep
+//! filing certificates even though every v0.4.0 run reports exactly 4032 MiB
+//! of VRAM tested regardless of card size. Five of the first seven reports in
+//! the database are that bug.
+//!
+//! A version floor makes the line explicit and moves it to the start of a run
+//! instead of the end, so someone on an old build is told to upgrade before
+//! spending sixteen minutes on a test whose result will be thrown away.
+
+/// Releases at or above this may open sessions and file certificates.
+///
+/// Raise this only for a release that changes what the numbers mean. Bug fixes
+/// that leave old results still true should not strand working clients.
+export const MIN_CLIENT_VERSION = "0.5.1";
+
+export const UPGRADE_MESSAGE =
+  "This version of gpu-cert is no longer supported because it misreports how much VRAM it tested. " +
+  "Download the current release from https://gpucert.com and run the test again.";
+
+/// Compares dotted numeric versions. Returns <0, 0, or >0 like a C comparator.
+///
+/// Missing components count as zero, so "0.5" and "0.5.0" are equal, and any
+/// component that isn't a number sorts as zero rather than throwing: a client
+/// sending a garbage version string should be refused by the floor, not crash
+/// the route.
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string) =>
+    v
+      .trim()
+      .replace(/^v/, "")
+      // Drops any prerelease or build suffix, so "0.5.1-rc1" compares as 0.5.1.
+      .split(/[-+]/)[0]
+      .split(".")
+      .map((part) => {
+        const n = Number.parseInt(part, 10);
+        return Number.isFinite(n) ? n : 0;
+      });
+
+  const left = parse(a);
+  const right = parse(b);
+  const len = Math.max(left.length, right.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+export function isSupportedClient(version: string): boolean {
+  return compareVersions(version, MIN_CLIENT_VERSION) >= 0;
+}

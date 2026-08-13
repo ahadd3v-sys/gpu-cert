@@ -49,7 +49,7 @@ report() {
   local session_id="$1" nonce="$2" errors="${3:-0}" mismatches="${4:-0}" frames="${5:-2700}"
   cat <<JSON
 {"attestation":{"session_id":"$session_id","nonce":"$nonce"},
-"client_version":"0.4.0","device_name":"AMD Radeon RX 6600","pcie_link_width_current":8,"pcie_link_width_max":8,
+"client_version":"0.5.1","device_name":"AMD Radeon RX 6600","pcie_link_width_current":8,"pcie_link_width_max":8,
 "fingerprint":{"uuid":"PCI_VEN_1002&DEV_73FF","pci_device_id":29695,"vram_total_bytes":8573157376,"vbios_version":"113-EXT47001-002","hash":"$FP"},
 "stress_test":{"dispatch_count":513,"duration_ms":300000,"telemetry_series":[{"elapsed_ms":1000,"temperature_c":58,"power_draw_mw":100000,"graphics_clock_mhz":2000,"memory_clock_mhz":1750,"utilization_pct":99}],"aborted_for_safety":false},
 "vram_test":{"passes_run":12563,"total_errors":$errors,"bytes_tested":7287183768,"duration_ms":600000,"aborted_for_safety":false},
@@ -166,10 +166,35 @@ curl -s -o /dev/null -X POST http://localhost:3111/feedback --data-urlencode "me
 check "too-short feedback is refused" "$([ "$(kit count feedback)" = "1" ] && echo 1 || echo 0)"
 
 echo ""
+echo "client version floor:"
+# Builds before 0.5.1 report a fixed 4032 MiB of VRAM tested no matter how much
+# the card has, so they are refused at the start of a run rather than after it.
+OLDSTART=$(curl -s -w '\n%{http_code}' -X POST http://localhost:3111/api/session/start \
+  -H 'content-type: application/json' \
+  -d '{"client_version":"0.4.0","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'"}')
+check "an outdated client cannot open a session" \
+  "$([ "$(echo "$OLDSTART" | tail -1)" = "426" ] && echo 1 || echo 0)"
+check "the refusal says where to get the current release" \
+  "$([ "$(echo "$OLDSTART" | grep -c 'gpucert.com')" = "1" ] && echo 1 || echo 0)"
+
+CURSTART=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3111/api/session/start \
+  -H 'content-type: application/json' \
+  -d '{"client_version":"0.5.1","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'"}')
+check "a current client can open a session" "$([ "$CURSTART" = "200" ] && echo 1 || echo 0)"
+
+# The floor is enforced again at submission, so a client that opened a session
+# under one version cannot file under an unsupported one.
+read -r OSID ONONCE <<<"$(curl -s -X POST http://localhost:3111/api/session/start -H 'content-type: application/json' \
+  -d '{"client_version":"0.5.1","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'"}' \
+  | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.session_id+' '+j.nonce)})")"
+check "an outdated client cannot file a certificate" \
+  "$([ "$(post_report "$(report "$OSID" "$ONONCE" | sed 's/"client_version":"0.5.1"/"client_version":"0.4.0"/')")" = "426" ] && echo 1 || echo 0)"
+
+echo ""
 echo "run diagnostics:"
 # A session carries the machine's environment before any testing happens, so a
 # run that later hangs has still said where it was.
-ENVJSON='{"client_version":"test","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'","environment":{"os":"windows","vulkan":{"count":2,"devices":[{"name":"Quadro T2000"},{"name":"Intel UHD"}]}}}'
+ENVJSON='{"client_version":"0.5.1","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'","environment":{"os":"windows","vulkan":{"count":2,"devices":[{"name":"Quadro T2000"},{"name":"Intel UHD"}]}}}'
 read -r DSID DNONCE <<<"$(curl -s -X POST http://localhost:3111/api/session/start -H 'content-type: application/json' -d "$ENVJSON" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.session_id+' '+j.nonce)})")"
 check "the environment is stored with the session" \
   "$([ "$(kit session-field "$DSID" environment | grep -c 'Quadro T2000')" = "1" ] && echo 1 || echo 0)"
