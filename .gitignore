@@ -4,3 +4,12 @@
 /backend/.env.local
 /backend/tsconfig.tsbuildinfo
 .DS_Store
+
+# Secrets never belong in the repo. The Resend key lives in
+# ~/.secrets/"gpu-cert production" and in Vercel, nowhere else.
+resend api.txt
+*.key
+
+# Internal working notes, shared between whoever is on this locally.
+# Kept out of the public repo but kept on disk.
+NOTES.md
