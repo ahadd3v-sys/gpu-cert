@@ -133,7 +133,11 @@ echo ""
 echo "site:"
 check "home renders" "$(has "$(curl -s http://localhost:3111/)" "Prove the card works")"
 check "verify is in the nav" "$(has "$(curl -s http://localhost:3111/)" 'href="/verify"')"
-check "open source is surfaced" "$(has "$(curl -s http://localhost:3111/)" "Open source on GitHub")"
+check "the source is surfaced" "$(has "$(curl -s http://localhost:3111/)" "Read the source")"
+check "early access is stated up front" "$(has "$(curl -s http://localhost:3111/)" "Early access")"
+# Never on the certificate: a buyer checking a stranger's card needs the
+# document to read as settled.
+check "the certificate says nothing about beta" "$(curl -s "http://localhost:3111/r/$PASS_ID" | grep -qi "early access\|beta" && echo 0 || echo 1)"
 check "login renders" "$(has "$(curl -s http://localhost:3111/login)" "Log in")"
 # A recovery flow nobody can find is the same as not having one.
 check "login links to password reset" "$(has "$(curl -s http://localhost:3111/login)" 'href="/forgot-password"')"

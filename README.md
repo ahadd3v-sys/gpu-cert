@@ -21,6 +21,25 @@ redesign (mock data): **https://claude.ai/code/artifact/cbca434f-8a03-4e15-9e40-
 share menu if someone else needs the link). The older Fraunces/navy preview
 link is stale.
 
+## Licence
+
+Business Source License 1.1, not MIT. The source is public and readable, which
+is the point given the client is an unsigned binary that reads your hardware
+and sends a report. What it does not permit is running a competing
+certificate-issuing service. Everything else, including a shop testing cards it
+sells, is explicitly granted. Each version converts to Apache 2.0 on
+2030-08-13.
+
+Note that this is *source available*, not open source: the OSI definition
+requires unrestricted commercial use and redistribution, and this restricts
+one. The site says "read the source" rather than "open source" for that reason,
+because an accurate weaker claim beats an inaccurate stronger one on a product
+whose entire pitch is trustworthiness.
+
+The practical protection is not really legal. A copied instance signs
+certificates with its own key, which nobody recognises, so trust does not fork.
+The licence exists so the lazy path is also the illegal one.
+
 ## Product scope
 
 Scoped deliberately to the certificate use case, not a general diagnostic

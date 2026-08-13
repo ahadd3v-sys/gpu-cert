@@ -56,6 +56,16 @@ const HOME_CSS = `
   .hero { padding: 6px 0 4px; }
   .hero-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
   .hero-aside { font-size: 12.5px; color: var(--ink-muted); }
+  .beta-note {
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--ink-muted);
+    border-left: 2px solid var(--paper-deep);
+    padding-left: 14px;
+    margin: 22px 0 0;
+    max-width: 62ch;
+  }
+  .beta-note b { color: var(--ink); font-weight: 500; }
 
   /* The three tests, in the certificate's own protocol register. Not
      numbered: they run as a set, and no order is meaningful to a reader. */
@@ -141,8 +151,9 @@ export function renderHome(loggedIn: boolean): string {
       <p class="statement">A used GPU listing is a claim with nothing behind it. GPU Cert runs a fixed test protocol against the card in your machine, then issues a signed certificate at a public URL. The buyer checks it themselves. No account needed to run it.</p>
       <div class="hero-actions">
         <a class="btn" href="${DOWNLOAD_URL}">Test your GPU</a>
-        <span class="hero-aside">Windows, 3.8&nbsp;MB. Runs about 16 minutes.</span>
+        <span class="hero-aside">Windows, 4&nbsp;MB. Runs about 16 minutes.</span>
       </div>
+      <p class="beta-note"><b>Early access.</b> The tool is new and free to use. Windows only, NVIDIA or AMD. It is unsigned, so Windows will warn you on first run: choose More info, then Run anyway. If anything breaks or a result looks wrong, <a href="/feedback">tell me</a>, that is what this stage is for.</p>
     </section>
 
     <hr class="rule">
@@ -749,7 +760,7 @@ export function renderFeedback(opts: {
       <button type="submit" class="btn">Send feedback</button>
     </form>
     <p class="feedback-alt">
-      The whole client and server are open source. If you would rather file a bug where you can watch it get fixed, or you want to read exactly what the tool does to your card before running it, that is all at <a href="${esc(REPO_URL)}">${esc(REPO_URL.replace("https://", ""))}</a>.
+      All of the source is public, client and server. If you would rather file a bug where you can watch it get fixed, or you want to read exactly what the tool does to your card before running it, that is all at <a href="${esc(REPO_URL)}">${esc(REPO_URL.replace("https://", ""))}</a>.
     </p>`,
   });
 }

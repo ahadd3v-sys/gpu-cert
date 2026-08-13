@@ -273,7 +273,7 @@ ${css}
 <footer class="page-footer">
   <p class="footer-note">GPU Cert issues signed hardware verification certificates. Every certificate is public and independently verifiable.</p>
   <p class="footer-note footer-links">
-    <a href="https://github.com/ahadd3v-sys/gpu-cert">Open source on GitHub</a>
+    <a href="https://github.com/ahadd3v-sys/gpu-cert">Read the source</a>
     <span aria-hidden="true">&middot;</span>
     <a href="/verify">Verify a certificate</a>
     <span aria-hidden="true">&middot;</span>
