@@ -10,7 +10,7 @@ pub mod fur_test;
 pub mod stress;
 pub mod vram_test;
 
-pub use device::{GpuSelector, VulkanContext};
+pub use device::{describe_devices, GpuSelector, VulkanContext};
 
 pub(crate) const STRESS_COMP_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/stress.comp.spv"));
 pub(crate) const VRAM_PATTERN_COMP_SPV: &[u8] =

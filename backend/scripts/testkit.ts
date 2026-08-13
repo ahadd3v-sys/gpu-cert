@@ -91,6 +91,13 @@ switch (command) {
     process.stdout.write(String(res.rows[0]?.u ?? "missing"));
     break;
   }
+  case "session-field": {
+    const [id, field] = args;
+    if (!/^[a-z_]+$/.test(field)) throw new Error("bad field");
+    const res = await db.execute({ sql: `SELECT ${field} AS v FROM test_sessions WHERE id = ?`, args: [id] });
+    process.stdout.write(String(res.rows[0]?.v ?? ""));
+    break;
+  }
   case "views": {
     // args: reportId, kind
     const res = await db.execute({

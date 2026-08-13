@@ -21,6 +21,7 @@ import {
   createTestSession,
   getTestSession,
   recordSessionProgress,
+  recordSessionFailure,
   consumeTestSession,
   countRecentSessions,
   createFeedback,
@@ -116,6 +117,10 @@ const SessionStartSchema = z.object({
   client_version: z.string().max(32),
   device_name: z.string().max(200),
   fingerprint_hash: z.string().regex(/^[0-9a-f]{64}$/),
+  // Optional so older clients still open sessions, but this is the field that
+  // makes a failed run diagnosable: every GPU the machine has, its memory
+  // heaps and types, driver versions, and which telemetry backend answered.
+  environment: z.unknown().optional(),
 });
 
 // A real run opens one session per ~16 minutes. This is far above that and
@@ -134,11 +139,17 @@ app.post("/api/session/start", async (c) => {
     return c.json({ error: "too many test sessions started recently" }, 429);
   }
 
+  const environment =
+    parsed.data.environment === undefined
+      ? null
+      : JSON.stringify(parsed.data.environment).slice(0, 200_000);
+
   const session = await createTestSession({
     fingerprintHash: parsed.data.fingerprint_hash,
     deviceName: parsed.data.device_name,
     clientVersion: parsed.data.client_version,
     ipHash,
+    environment,
   });
   return c.json({
     session_id: session.id,
@@ -152,15 +163,51 @@ app.post("/api/session/start", async (c) => {
 app.post("/api/session/progress", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = z
-    .object({ session_id: z.string().min(1), nonce: z.string().min(1) })
+    .object({
+      session_id: z.string().min(1),
+      nonce: z.string().min(1),
+      log: z.array(z.string().max(4000)).max(500).optional(),
+    })
     .safeParse(body);
   if (!parsed.success) {
     return c.json({ error: "invalid progress request" }, 400);
   }
-  const ok = await recordSessionProgress(parsed.data.session_id, parsed.data.nonce);
+  const ok = await recordSessionProgress(
+    parsed.data.session_id,
+    parsed.data.nonce,
+    parsed.data.log ?? []
+  );
   // Deliberately not an error the client should act on. A heartbeat that fails
   // must never interrupt a test that is otherwise running fine.
   return c.json({ ok });
+});
+
+// Posted by a run that is about to die, from the error path or the panic
+// hook. Two failures have already gone undiagnosed because a crashed run left
+// nothing at all behind and the console had been closed by the time anyone
+// asked.
+app.post("/api/session/failed", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z
+    .object({
+      session_id: z.string().min(1),
+      nonce: z.string().min(1),
+      error: z.string().max(8000),
+      log: z.array(z.string().max(4000)).max(2000).optional(),
+    })
+    .safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "invalid failure report" }, 400);
+  }
+  await recordSessionFailure(
+    parsed.data.session_id,
+    parsed.data.nonce,
+    parsed.data.error,
+    parsed.data.log ?? []
+  );
+  // Always accepted. A client on its way out cannot act on a rejection, and
+  // an argument about the shape of a crash report helps nobody.
+  return c.json({ ok: true });
 });
 
 app.post("/api/certify", async (c) => {

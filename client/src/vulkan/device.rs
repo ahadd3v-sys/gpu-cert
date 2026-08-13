@@ -361,6 +361,101 @@ impl Drop for VulkanContext {
     }
 }
 
+/// Describes every Vulkan device on the machine, independent of whether one
+/// of them can be selected.
+///
+/// Deliberately separate from `VulkanContext::new`, which refuses to continue
+/// when it cannot find the card the telemetry named. That refusal is correct,
+/// but it means the interesting information (what *was* there, and why none of
+/// it matched) is exactly what gets thrown away. A laptop reporting that the
+/// tool "didn't detect the other GPU" is unanswerable without this.
+///
+/// Never returns an error: a diagnostic that fails to collect is worse than
+/// useless, because it removes the evidence for the failure it was supposed to
+/// explain. Anything it cannot read is reported as such and the rest continues.
+pub fn describe_devices() -> serde_json::Value {
+    use serde_json::json;
+
+    unsafe {
+        let entry = match ash::Entry::load() {
+            Ok(e) => e,
+            Err(e) => return json!({ "error": format!("Vulkan loader unavailable: {e}") }),
+        };
+        let app_info = vk::ApplicationInfo::default()
+            .application_name(c"gpu-cert")
+            .api_version(vk::API_VERSION_1_1);
+        let instance = match entry
+            .create_instance(&vk::InstanceCreateInfo::default().application_info(&app_info), None)
+        {
+            Ok(i) => i,
+            Err(e) => return json!({ "error": format!("vkCreateInstance failed: {e:?}") }),
+        };
+
+        let devices = match instance.enumerate_physical_devices() {
+            Ok(d) => d,
+            Err(e) => {
+                instance.destroy_instance(None);
+                return json!({ "error": format!("vkEnumeratePhysicalDevices failed: {e:?}") });
+            }
+        };
+
+        let described: Vec<serde_json::Value> = devices
+            .iter()
+            .map(|&pd| {
+                let p = instance.get_physical_device_properties(pd);
+                let mem = instance.get_physical_device_memory_properties(pd);
+                let heaps: Vec<serde_json::Value> = (0..mem.memory_heap_count)
+                    .map(|i| {
+                        json!({
+                            "index": i,
+                            "size_mb": mem.memory_heaps[i as usize].size / 1_048_576,
+                            "device_local": mem.memory_heaps[i as usize]
+                                .flags
+                                .contains(vk::MemoryHeapFlags::DEVICE_LOCAL),
+                        })
+                    })
+                    .collect();
+                let types: Vec<serde_json::Value> = (0..mem.memory_type_count)
+                    .map(|i| {
+                        json!({
+                            "index": i,
+                            "heap": mem.memory_types[i as usize].heap_index,
+                            "flags": format!("{:?}", mem.memory_types[i as usize].property_flags),
+                        })
+                    })
+                    .collect();
+                let queues: Vec<String> = instance
+                    .get_physical_device_queue_family_properties(pd)
+                    .iter()
+                    .map(|q| format!("{:?} x{}", q.queue_flags, q.queue_count))
+                    .collect();
+
+                json!({
+                    "name": CStr::from_ptr(p.device_name.as_ptr()).to_string_lossy(),
+                    "type": format!("{:?}", p.device_type),
+                    "vendor_id": format!("0x{:04X}", p.vendor_id),
+                    "device_id": format!("0x{:04X}", p.device_id),
+                    "driver_version": p.driver_version,
+                    "api_version": format!(
+                        "{}.{}.{}",
+                        vk::api_version_major(p.api_version),
+                        vk::api_version_minor(p.api_version),
+                        vk::api_version_patch(p.api_version)
+                    ),
+                    "max_storage_buffer_range": p.limits.max_storage_buffer_range,
+                    "max_compute_workgroups_x": p.limits.max_compute_work_group_count[0],
+                    "memory_heaps": heaps,
+                    "memory_types": types,
+                    "queue_families": queues,
+                })
+            })
+            .collect();
+
+        instance.destroy_instance(None);
+        json!({ "count": described.len(), "devices": described })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,3 +543,4 @@ mod tests {
         assert_eq!(chosen, Some(1));
     }
 }
+

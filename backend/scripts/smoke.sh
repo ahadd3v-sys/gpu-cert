@@ -160,6 +160,30 @@ curl -s -o /dev/null -X POST http://localhost:3111/feedback --data-urlencode "me
 check "too-short feedback is refused" "$([ "$(kit count feedback)" = "1" ] && echo 1 || echo 0)"
 
 echo ""
+echo "run diagnostics:"
+# A session carries the machine's environment before any testing happens, so a
+# run that later hangs has still said where it was.
+ENVJSON='{"client_version":"test","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'","environment":{"os":"windows","vulkan":{"count":2,"devices":[{"name":"Quadro T2000"},{"name":"Intel UHD"}]}}}'
+read -r DSID DNONCE <<<"$(curl -s -X POST http://localhost:3111/api/session/start -H 'content-type: application/json' -d "$ENVJSON" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.session_id+' '+j.nonce)})")"
+check "the environment is stored with the session" \
+  "$([ "$(kit session-field "$DSID" environment | grep -c 'Quadro T2000')" = "1" ] && echo 1 || echo 0)"
+
+curl -s -o /dev/null -X POST http://localhost:3111/api/session/progress -H 'content-type: application/json' \
+  -d "{\"session_id\":\"$DSID\",\"nonce\":\"$DNONCE\",\"log\":[\"=== stress test ===\",\"first line\"]}"
+curl -s -o /dev/null -X POST http://localhost:3111/api/session/progress -H 'content-type: application/json' \
+  -d "{\"session_id\":\"$DSID\",\"nonce\":\"$DNONCE\",\"log\":[\"second line\"]}"
+check "heartbeats append to the run log rather than replacing it" \
+  "$([ "$(kit session-field "$DSID" run_log | grep -c 'line')" = "2" ] && echo 1 || echo 0)"
+
+# The whole point: a run that dies still explains itself.
+curl -s -o /dev/null -X POST http://localhost:3111/api/session/failed -H 'content-type: application/json' \
+  -d "{\"session_id\":\"$DSID\",\"nonce\":\"$DNONCE\",\"error\":\"panic: attempt to subtract with overflow\",\"log\":[\"=== VRAM pattern test ===\",\"boom\"]}"
+check "a crashed run records why it died" \
+  "$(kit session-field "$DSID" failure | grep -q 'subtract with overflow' && echo 1 || echo 0)"
+check "the failure keeps the log that led to it" \
+  "$(kit session-field "$DSID" run_log | grep -q 'VRAM pattern test' && echo 1 || echo 0)"
+
+echo ""
 echo "view tracking:"
 BROWSER="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
 curl -s -o /dev/null -A "$BROWSER" -e "https://www.reddit.com/r/hardwareswap/comments/x" "http://localhost:3111/r/$PASS_ID"

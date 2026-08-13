@@ -311,6 +311,10 @@ pub struct TestSession {
     pub nonce: String,
     heartbeat_interval: Duration,
     last_heartbeat: std::cell::Cell<std::time::Instant>,
+    /// How much of the log the backend already has. Only the new lines go up
+    /// with each heartbeat, so a long run doesn't re-send its whole history
+    /// every minute.
+    lines_sent: std::cell::Cell<usize>,
 }
 
 impl TestSession {
@@ -329,6 +333,10 @@ impl TestSession {
         }
         self.last_heartbeat.set(std::time::Instant::now());
 
+        let all = crate::diag::snapshot();
+        let already = self.lines_sent.get().min(all.len());
+        let fresh: Vec<String> = all[already..].to_vec();
+
         let client = match reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -336,13 +344,20 @@ impl TestSession {
             Ok(c) => c,
             Err(_) => return,
         };
-        let _ = client
+        let sent = client
             .post(format!("{BACKEND_BASE_URL}/api/session/progress"))
             .json(&serde_json::json!({
                 "session_id": self.session_id,
                 "nonce": self.nonce,
+                "log": fresh,
             }))
-            .send();
+            .send()
+            .is_ok();
+        // Only advance on success, so a dropped heartbeat re-sends its lines
+        // next time rather than losing them.
+        if sent {
+            self.lines_sent.set(all.len());
+        }
     }
 }
 
@@ -353,6 +368,7 @@ pub fn start_session(
     client_version: &str,
     device_name: &str,
     fingerprint_hash: &str,
+    environment: serde_json::Value,
 ) -> anyhow::Result<TestSession> {
     #[derive(serde::Deserialize)]
     struct RawSession {
@@ -373,6 +389,9 @@ pub fn start_session(
             "client_version": client_version,
             "device_name": device_name,
             "fingerprint_hash": fingerprint_hash,
+            // Sent before any testing, so a run that later hangs or crashes
+            // has still told the backend what machine it was on.
+            "environment": environment,
         }))
         .send()
         .map_err(|e| anyhow::anyhow!("couldn't reach the backend to start a test session: {e}"))?;
@@ -394,5 +413,31 @@ pub fn start_session(
         // Server-chosen, so the cadence can change without reissuing clients.
         heartbeat_interval: Duration::from_millis(raw.heartbeat_interval_ms.unwrap_or(60_000)),
         last_heartbeat: std::cell::Cell::new(std::time::Instant::now()),
+        lines_sent: std::cell::Cell::new(0),
     })
+}
+
+/// Posts a failure against the open session. Called from the error path and
+/// from the panic hook, which is why it takes ids rather than a borrowed
+/// session and never returns an error: it runs while the process is already
+/// on its way out.
+///
+/// Without this a crashed run leaves nothing at all, which is how two failures
+/// have already gone undiagnosed.
+pub fn report_failure(session_id: &str, nonce: &str, error: &str) {
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+    else {
+        return;
+    };
+    let _ = client
+        .post(format!("{BACKEND_BASE_URL}/api/session/failed"))
+        .json(&serde_json::json!({
+            "session_id": session_id,
+            "nonce": nonce,
+            "error": error,
+            "log": crate::diag::snapshot(),
+        }))
+        .send();
 }

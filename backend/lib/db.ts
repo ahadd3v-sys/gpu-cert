@@ -92,7 +92,15 @@ CREATE TABLE IF NOT EXISTS test_sessions (
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_progress_at TEXT,
   progress_count INTEGER NOT NULL DEFAULT 0,
-  consumed_at TEXT
+  consumed_at TEXT,
+  -- What machine this ran on, captured before any testing so a run that later
+  -- hangs or crashes has still said where it was.
+  environment TEXT,
+  -- The run's own log, appended as it goes. A run that never finishes still
+  -- leaves the phase it reached, which is the whole point.
+  run_log TEXT,
+  failed_at TEXT,
+  failure TEXT
 );
 
 -- Text only, deliberately: see the note in app.ts's /feedback route on why
@@ -166,6 +174,10 @@ const MIGRATIONS = [
   `ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1`,
   `ALTER TABLE users ADD COLUMN username TEXT`,
   `ALTER TABLE reports ADD COLUMN vram_diagnostics TEXT`,
+  `ALTER TABLE test_sessions ADD COLUMN environment TEXT`,
+  `ALTER TABLE test_sessions ADD COLUMN run_log TEXT`,
+  `ALTER TABLE test_sessions ADD COLUMN failed_at TEXT`,
+  `ALTER TABLE test_sessions ADD COLUMN failure TEXT`,
 ];
 
 // Order matters, and getting it wrong takes the whole site down rather than
@@ -428,6 +440,7 @@ export async function createTestSession(opts: {
   deviceName: string;
   clientVersion: string;
   ipHash: string;
+  environment?: string | null;
 }): Promise<{ id: string; nonce: string }> {
   await ensureSchema();
   const id = crypto.randomUUID();
@@ -438,9 +451,9 @@ export async function createTestSession(opts: {
     b.toString(16).padStart(2, "0")
   ).join("");
   await db().execute({
-    sql: `INSERT INTO test_sessions (id, nonce, fingerprint_hash, device_name, client_version, ip_hash, started_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, nonce, opts.fingerprintHash, opts.deviceName, opts.clientVersion, opts.ipHash, new Date().toISOString()],
+    sql: `INSERT INTO test_sessions (id, nonce, fingerprint_hash, device_name, client_version, ip_hash, started_at, environment)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, nonce, opts.fingerprintHash, opts.deviceName, opts.clientVersion, opts.ipHash, new Date().toISOString(), opts.environment ?? null],
   });
   return { id, nonce };
 }
@@ -459,13 +472,42 @@ export async function getTestSession(id: string, nonce: string): Promise<TestSes
 
 /// Returns false if the session doesn't exist, the nonce is wrong, or it has
 /// already been consumed, so a client can't keep a finished session alive.
-export async function recordSessionProgress(id: string, nonce: string): Promise<boolean> {
+export async function recordSessionProgress(
+  id: string,
+  nonce: string,
+  logLines: string[] = []
+): Promise<boolean> {
+  await ensureSchema();
+  // Appended rather than replaced, so each heartbeat only carries what is new
+  // and a long run does not re-upload its history every minute. Capped so a
+  // misbehaving client cannot grow one row without bound.
+  const appended = logLines.length ? logLines.join("\n") + "\n" : "";
+  const res = await db().execute({
+    sql: `UPDATE test_sessions
+          SET progress_count = progress_count + 1,
+              last_progress_at = ?,
+              run_log = substr(COALESCE(run_log, '') || ?, 1, 200000)
+          WHERE id = ? AND nonce = ? AND consumed_at IS NULL`,
+    args: [new Date().toISOString(), appended, id, nonce],
+  });
+  return res.rowsAffected > 0;
+}
+
+/// Records why a run died. The one thing a crashed run can still do, and the
+/// difference between a bug that gets fixed and one that is only ever
+/// described second-hand as "it got stuck".
+export async function recordSessionFailure(
+  id: string,
+  nonce: string,
+  failure: string,
+  logLines: string[]
+): Promise<boolean> {
   await ensureSchema();
   const res = await db().execute({
     sql: `UPDATE test_sessions
-          SET progress_count = progress_count + 1, last_progress_at = ?
-          WHERE id = ? AND nonce = ? AND consumed_at IS NULL`,
-    args: [new Date().toISOString(), id, nonce],
+          SET failed_at = ?, failure = ?, run_log = substr(?, 1, 200000)
+          WHERE id = ? AND nonce = ?`,
+    args: [new Date().toISOString(), failure.slice(0, 8000), logLines.join("\n"), id, nonce],
   });
   return res.rowsAffected > 0;
 }

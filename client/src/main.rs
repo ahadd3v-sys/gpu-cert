@@ -1,5 +1,6 @@
 mod account;
 mod adl;
+mod diag;
 mod fingerprint;
 mod nvml;
 mod report;
@@ -24,6 +25,14 @@ enum GpuBackend {
 }
 
 impl GpuBackend {
+    fn name(&self) -> &'static str {
+        match self {
+            GpuBackend::Nvml(_) => "nvml",
+            #[cfg(target_os = "windows")]
+            GpuBackend::Adl(_) => "adl",
+        }
+    }
+
     fn read_primary_gpu(&self) -> anyhow::Result<GpuTelemetry> {
         match self {
             GpuBackend::Nvml(n) => n.read_primary_gpu(),
@@ -94,16 +103,38 @@ const FAST_FUR_TEST_DURATION: Duration = Duration::from_secs(10);
 // be read. `main` stays a thin wrapper around `run` so every exit path
 // (early `?` returns, the happy path, and even a panic) goes through
 // `pause_before_exit` before the process actually terminates.
+/// Set once a session exists, so the panic hook and the error path can both
+/// file a failure against it. A crashed run that reports nothing is a run
+/// nobody can fix.
+static OPEN_SESSION: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+
+fn report_failure(error: &str) {
+    diag::record(format!("FAILED: {error}"));
+    let session = OPEN_SESSION.lock().ok().and_then(|s| s.clone());
+    if let Some((id, nonce)) = session {
+        report::report_failure(&id, &nonce, error);
+    }
+    if let Some(path) = diag::write_local_copy() {
+        eprintln!("\nA log of this run was saved to {}", path.display());
+        eprintln!("Paste it at https://gpucert.com/feedback and this gets fixed.");
+    }
+}
+
 fn main() {
+    diag::init();
     let default_panic_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default_panic_hook(info);
+        report_failure(&format!("panic: {info}"));
         pause_before_exit();
     }));
 
     let result = run();
     if let Err(ref e) = result {
         eprintln!("Error: {e:?}");
+        report_failure(&format!("{e:?}"));
+    } else {
+        diag::write_local_copy();
     }
     pause_before_exit();
 
@@ -149,8 +180,25 @@ fn run() -> anyhow::Result<()> {
         (STRESS_TEST_DURATION, VRAM_TEST_DURATION, FUR_TEST_DURATION)
     };
 
-    let gpu = load_gpu_backend()?;
+    diag::phase("enumerating Vulkan devices");
+    // Collected before anything can refuse to continue, so a machine where no
+    // device matches still reports what it had. "It didn't detect my other
+    // GPU" is unanswerable without this.
+    let vulkan_devices = vulkan::describe_devices();
+    diag::record(format!("vulkan: {vulkan_devices}"));
+
+    diag::phase("loading vendor telemetry");
+    let gpu = load_gpu_backend().inspect_err(|e| diag::record(format!("backend load failed: {e}")))?;
+    let telemetry_backend = gpu.name();
     let telemetry = gpu.read_primary_gpu()?;
+    diag::record(format!(
+        "telemetry: {} vendor=0x{:04X} device=0x{:04X} vram={}MB vbios={}",
+        telemetry.name,
+        telemetry.pci_vendor_id,
+        telemetry.pci_device_id,
+        telemetry.vram_total_bytes / 1_048_576,
+        telemetry.vbios_version
+    ));
     println!("Detected GPU: {} (VRAM: {} MB)", telemetry.name, telemetry.vram_total_bytes / 1_048_576);
 
     let fingerprint = Fingerprint::from_telemetry(&telemetry);
@@ -159,12 +207,23 @@ fn run() -> anyhow::Result<()> {
     // Matched against the telemetry rather than taken as device 0, so the
     // card being tested is provably the card being certified. See
     // VulkanContext::new.
+    diag::phase("selecting the Vulkan device");
     let ctx = VulkanContext::new(&vulkan::GpuSelector {
         vendor_id: telemetry.pci_vendor_id,
         device_id: telemetry.pci_device_id,
         name: telemetry.name.clone(),
     })?;
     println!("Vulkan device: {}", ctx.device_name);
+    diag::record(format!(
+        "selected {}: heap {} of {}MB, device-local types {:?}, maxStorageBufferRange={}, maxMemoryAllocationSize={}MB, budget={}",
+        ctx.device_name,
+        ctx.device_local_heap_index,
+        ctx.device_local_heap_size / 1_048_576,
+        ctx.device_local_memory_types,
+        ctx.max_storage_buffer_range,
+        ctx.max_memory_allocation_size / 1_048_576,
+        ctx.available_device_local_bytes().map(|b| b / 1_048_576).unwrap_or(0)
+    ));
 
     // Asked here, after we know there's a working GPU to test but before the
     // ~16 minutes of load start. Asking afterwards would mean an unattended run
@@ -175,12 +234,27 @@ fn run() -> anyhow::Result<()> {
     // Opened before any load is applied. The backend times the gap between
     // this and the submission, which is what stops a certificate from being
     // something you can produce with a single request instead of a real run.
+    diag::phase("opening the test session");
     let session = report::start_session(
         env!("CARGO_PKG_VERSION"),
         &telemetry.name,
         &fingerprint.hash,
+        serde_json::json!({
+            "client_version": env!("CARGO_PKG_VERSION"),
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "args": std::env::args().skip(1).collect::<Vec<_>>(),
+            "vulkan": vulkan_devices,
+            "selected_device": ctx.device_name,
+            "telemetry_backend": telemetry_backend,
+            "log": diag::snapshot(),
+        }),
     )?;
+    if let Ok(mut open) = OPEN_SESSION.lock() {
+        *open = Some((session.session_id.clone(), session.nonce.clone()));
+    }
 
+    diag::phase("stress test");
     println!("Running stress test ({}s)...", stress_duration.as_secs());
     let mut telemetry_series = Vec::new();
     let stress_started = Instant::now();
@@ -218,6 +292,7 @@ fn run() -> anyhow::Result<()> {
         report::build_stress_report(telemetry_series, &stress_run, stress_started.elapsed());
     println!("Stress test complete: {} dispatches", stress_report.dispatch_count);
 
+    diag::phase("VRAM pattern test");
     println!("Running VRAM pattern test ({}s)...", vram_duration.as_secs());
     let vram_result = vulkan::vram_test::run(
         &ctx,
@@ -253,6 +328,7 @@ fn run() -> anyhow::Result<()> {
         vram_report.bytes_tested / 1_048_576
     );
 
+    diag::phase("render integrity test");
     println!("Running render integrity test ({}s)...", fur_duration.as_secs());
     let fur_result = vulkan::fur_test::run(&ctx, fur_duration, |elapsed| {
         print_progress(&format!("  {:>3}s", elapsed.as_secs()));
@@ -287,6 +363,7 @@ fn run() -> anyhow::Result<()> {
         fur_test: fur_report,
     };
 
+    diag::phase("submitting");
     println!("Submitting report...");
     let response = report::submit(&request, upload_key.as_deref())?;
     println!("Done. Report: {}", response.report_url);
