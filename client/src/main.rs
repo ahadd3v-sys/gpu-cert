@@ -417,15 +417,17 @@ fn run() -> anyhow::Result<()> {
     screen.start(2, "filing the certificate");
     let response = report::submit(&request, upload_key.as_deref())?;
 
-    let passed = response.verdict.eq_ignore_ascii_case("pass");
-    let headline = if passed {
-        format!("{} passed every test", telemetry.name)
-    } else {
-        response
+    let passed = response.verdict.as_deref().map(|v| v.eq_ignore_ascii_case("pass"));
+    let headline = match passed {
+        Some(true) => format!("{} passed every test", telemetry.name),
+        Some(false) => response
             .verdict_reasons
             .first()
             .cloned()
-            .unwrap_or_else(|| format!("{} failed", telemetry.name))
+            .unwrap_or_else(|| format!("{} failed", telemetry.name)),
+        // Filed successfully, verdict unknown. Say so and send them to the
+        // document that does know, rather than inventing an answer.
+        None => format!("{} tested. Open the report for the verdict.", telemetry.name),
     };
 
     let mut lines: Vec<(&str, String)> = vec![

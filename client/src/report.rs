@@ -108,7 +108,12 @@ pub struct CertifyResponse {
     /// rather than recomputed here, because two implementations of "did this
     /// card pass" will eventually disagree, and a console reading PASS over a
     /// certificate reading FAIL is the worst possible version of that.
-    pub verdict: String,
+    ///
+    /// `None` when the backend did not say, which an older deployment will
+    /// not. Deliberately not defaulted to a pass: assuming the good outcome
+    /// when told nothing recreates exactly the disagreement this field exists
+    /// to prevent, and it would do it on the failing card, where it matters.
+    pub verdict: Option<String>,
     /// Why it failed, in the certificate's own words. Empty on a pass.
     pub verdict_reasons: Vec<String>,
     /// Email of the account the report was filed under, if an upload key was
@@ -274,7 +279,7 @@ fn post_payload(payload: &str, upload_key: Option<&str>) -> anyhow::Result<Certi
             badge_url: raw.badge_url,
             filed_to: raw.filed_to,
             upload_key_recognized: raw.upload_key_recognized,
-            verdict: raw.verdict.unwrap_or_else(|| "Pass".to_string()),
+            verdict: raw.verdict,
             verdict_reasons: raw.verdict_reasons,
         });
     }

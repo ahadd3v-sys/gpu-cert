@@ -17,7 +17,7 @@ fn main() {
     screen.update(2, 0.62, "comparing every pixel of every frame");
     ui::result(
         env!("CARGO_PKG_VERSION"),
-        true,
+        Some(true),
         "AMD Radeon RX 6600 passed every test",
         &[
             ("Coverage", "83% of VRAM, 0 errors".to_string()),

@@ -395,7 +395,15 @@ fn bar(fraction: f32) -> String {
 
 /// The last thing anyone sees. Drawn fresh rather than appended, because the
 /// only things that matter at this point are the verdict and the link.
-pub fn result(version: &str, verdict_pass: bool, headline: &str, lines: &[(&str, String)]) {
+/// `verdict_pass` is `None` when the backend did not report one. That prints a
+/// neutral stamp pointing at the certificate rather than guessing, because a
+/// guess here is a console contradicting the document it just produced.
+pub fn result(
+    version: &str,
+    verdict_pass: Option<bool>,
+    headline: &str,
+    lines: &[(&str, String)],
+) {
     if ansi() {
         print!("\x1b[2J\x1b[H");
     }
@@ -410,10 +418,10 @@ pub fn result(version: &str, verdict_pass: bool, headline: &str, lines: &[(&str,
         println!();
     }
 
-    let stamp = if verdict_pass {
-        paint(GREEN, "  PASS  ")
-    } else {
-        paint(RED, "  FAIL  ")
+    let stamp = match verdict_pass {
+        Some(true) => paint(GREEN, "  PASS  "),
+        Some(false) => paint(RED, "  FAIL  "),
+        None => paint(DIM, " FILED  "),
     };
     println!("  {} {}", paint(BOLD, &stamp), paint(BOLD, headline));
     println!();

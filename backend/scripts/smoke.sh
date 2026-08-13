@@ -85,6 +85,10 @@ kit backdate "$SID" 1000 9 >/dev/null
 RESP=$(post_report_body "$(report "$SID" "$NONCE")")
 PASS_ID=$(id_of "$RESP")
 check "an attested run is accepted" "$([ -n "$PASS_ID" ] && echo 1 || echo 0)"
+# The exe prints this rather than recomputing pass/fail, so if it ever stops
+# being returned the console starts disagreeing with the certificate.
+check "the response carries the verdict for the client to print" \
+  "$(has "$RESP" '"verdict":"Pass"')"
 check "the session is single use" \
   "$([ "$(post_report "$(report "$SID" "$NONCE")")" = "409" ] && echo 1 || echo 0)"
 
