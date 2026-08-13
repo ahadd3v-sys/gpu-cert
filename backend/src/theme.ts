@@ -30,6 +30,18 @@ export const TOKENS_CSS = `:root {
     --mark: #14120f;
     --pass: #3f6c4f;
     --fail: #96432f;
+    /* A surface lifted slightly off the page: input wells, the upload-key
+       panel, console blocks. Was hardcoded at four call sites, which is why
+       they all stayed cream when the site gained a dark mode. */
+    --paper-raised: #f6f5f0;
+    /* Tints of the accent colours, used as callout backgrounds, and the sheet
+       shadow. Written as literals at seven call sites for the same reason and
+       with the same result: a tint mixed for cream paper is invisible on a
+       dark one. */
+    --tint-mark: rgba(20, 18, 15, 0.05);
+    --tint-pass: rgba(63, 108, 79, 0.07);
+    --tint-fail: rgba(150, 67, 47, 0.07);
+    --shadow-sheet: 0 18px 40px -24px rgba(26, 24, 20, 0.45), 0 2px 6px rgba(26, 24, 20, 0.06);
   }`;
 
 /// Dark tokens for the site's own pages, and deliberately not for the
@@ -47,27 +59,30 @@ export const TOKENS_CSS = `:root {
 /// Applied by [data-theme="dark"] rather than by a media query alone, because
 /// the toggle has to be able to win in both directions: a viewer who prefers
 /// dark system-wide may still want this light, and the reverse.
-export const DARK_TOKENS_CSS = `
-  :root[data-theme="dark"] {
+const DARK_VALUES = `
     --paper: #17161a;
     --paper-deep: #26242b;
     --paper-edge: #2f2c35;
+    --paper-raised: #201e25;
     --ink: #e8e4dc;
     --ink-muted: #9a94a3;
     --mark: #f0ece4;
     --pass: #6fae83;
     --fail: #d1785f;
+    /* Lighter than their light-mode counterparts, not darker: a tint has to
+       lift off the surface it sits on, and here the surface is dark. */
+    --tint-mark: rgba(240, 236, 228, 0.06);
+    --tint-pass: rgba(111, 174, 131, 0.14);
+    --tint-fail: rgba(209, 120, 95, 0.14);
+    /* Shadows do nothing on a dark ground, so this leans on the border
+       instead of faking depth nobody can see. */
+    --shadow-sheet: 0 1px 0 rgba(0, 0, 0, 0.4);`;
+
+export const DARK_TOKENS_CSS = `
+  :root[data-theme="dark"] {${DARK_VALUES}
   }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --paper: #17161a;
-      --paper-deep: #26242b;
-      --paper-edge: #2f2c35;
-      --ink: #e8e4dc;
-      --ink-muted: #9a94a3;
-      --mark: #f0ece4;
-      --pass: #6fae83;
-      --fail: #d1785f;
+    :root:not([data-theme="light"]) {${DARK_VALUES}
     }
   }`;
 
@@ -199,7 +214,7 @@ const SITE_CSS = `
     position: relative;
     background: var(--paper);
     border: 1px solid var(--paper-deep);
-    box-shadow: 0 18px 40px -24px rgba(26, 24, 20, 0.45), 0 2px 6px rgba(26, 24, 20, 0.06);
+    box-shadow: var(--shadow-sheet);
     padding: 36px 40px 32px;
   }
   .tick { position: absolute; width: 14px; height: 14px; }
@@ -264,7 +279,7 @@ const SITE_CSS = `
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 14px;
     padding: 9px 11px;
-    background: #f6f5f0;
+    background: var(--paper-raised);
     border: 1px solid var(--paper-deep);
     border-radius: 4px;
     border-bottom: 1.5px solid var(--ink-muted);
@@ -276,7 +291,7 @@ const SITE_CSS = `
      certificate's "Why This Failed" list. */
   .notice-fail {
     border-left: 3px solid var(--fail);
-    background: rgba(150, 67, 47, 0.07);
+    background: var(--tint-fail);
     color: var(--fail);
     font-size: 13.5px;
     padding: 9px 14px;

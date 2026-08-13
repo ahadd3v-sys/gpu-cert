@@ -354,7 +354,7 @@ const DASHBOARD_CSS = `
 
   /* Connect-the-app panel. The key is the only interactive secret on the
      site, so it gets the monospace/tabular treatment data gets elsewhere. */
-  .key-panel { background: #f6f5f0; border: 1px solid var(--paper-deep); border-radius: 6px; padding: 20px 22px; }
+  .key-panel { background: var(--paper-raised); border: 1px solid var(--paper-deep); border-radius: 6px; padding: 20px 22px; }
   /* .statement caps at 54ch for running prose; inside this panel that leaves
      a short ragged column against a full-width box. */
   .key-panel .statement { max-width: none; }
@@ -507,7 +507,7 @@ export function renderDashboard(
       td.views { color: var(--ink-muted); }
       .notice-info {
         display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-        border-left: 3px solid var(--mark); background: rgba(20, 18, 15, 0.05);
+        border-left: 3px solid var(--mark); background: var(--tint-mark);
         font-size: 13.5px; padding: 10px 14px; margin: 0 0 20px;
       }
       .notice-info form { margin: 0; }`,
@@ -561,11 +561,11 @@ const VERIFY_CSS = `
 
   .result {
     border-left: 3px solid var(--pass);
-    background: rgba(63, 108, 79, 0.07);
+    background: var(--tint-pass);
     padding: 16px 18px;
     margin: 26px 0 0;
   }
-  .result.invalid { border-left-color: var(--fail); background: rgba(150, 67, 47, 0.07); }
+  .result.invalid { border-left-color: var(--fail); background: var(--tint-fail); }
   .result-verdict { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 18px; margin: 0 0 6px; color: var(--pass); }
   .result.invalid .result-verdict { color: var(--fail); }
   .result-detail { font-size: 13.5px; color: var(--ink-muted); margin: 0; line-height: 1.6; }
@@ -586,7 +586,7 @@ const VERIFY_CSS = `
     font-size: 11.5px;
     line-height: 1.7;
     color: var(--ink-muted);
-    background: #f6f5f0;
+    background: var(--paper-raised);
     border: 1px solid var(--paper-deep);
     border-radius: 4px;
     padding: 12px 14px;
@@ -694,7 +694,7 @@ const FEEDBACK_CSS = `
     font-size: 14px;
     line-height: 1.6;
     color: var(--ink);
-    background: var(--paper-bright, #f4f2ec);
+    background: var(--paper-raised);
     border: 1px solid var(--paper-deep);
     border-radius: 4px;
     padding: 10px 12px;
@@ -709,7 +709,7 @@ const FEEDBACK_CSS = `
   .trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
   .notice-pass {
     border-left: 3px solid var(--pass);
-    background: rgba(63, 108, 79, 0.07);
+    background: var(--tint-pass);
     color: var(--pass);
     font-size: 13.5px;
     padding: 9px 14px;
@@ -809,7 +809,7 @@ export function renderForgotPassword(opts: {
     nav: loggedOutNav(),
     width: 470,
     css: `${AUTH_CSS}
-      .notice-pass { border-left: 3px solid var(--pass); background: rgba(63, 108, 79, 0.07); color: var(--pass); font-size: 13.5px; padding: 9px 14px; margin: 0 0 20px; }`,
+      .notice-pass { border-left: 3px solid var(--pass); background: var(--tint-pass); color: var(--pass); font-size: 13.5px; padding: 9px 14px; margin: 0 0 20px; }`,
     body: `
     <div class="auth-head">
       <p class="eyebrow">Reset password</p>
