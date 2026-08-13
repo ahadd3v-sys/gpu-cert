@@ -137,11 +137,24 @@ export function computeVerdict(req: CertifyRequest): VerdictResult {
     reasons.push("Render integrity test stopped early because the GPU reached an unsafe temperature. This indicates inadequate cooling.");
   }
 
-  if (req.pcie_link_width_current < req.pcie_link_width_max) {
-    reasons.push(
-      `PCIe link running at x${req.pcie_link_width_current} instead of its x${req.pcie_link_width_max} maximum. This indicates a connector, slot, or riser cable issue.`
-    );
-  }
+  // Deliberately not a failure, and this was wrong until an RTX 3070 was failed
+  // by it.
+  //
+  // Link width is a property of the machine the card is currently sitting in,
+  // not of the card being sold. Consumer boards routinely drop the primary slot
+  // to x8 when an M.2 drive is populated, and a second slot is often x8 or x4
+  // by design. The buyer will plug this card into their own board and get
+  // whatever their board provides, so failing the card for the seller's
+  // motherboard layout is failing the wrong thing entirely.
+  //
+  // A damaged edge connector on the card would also show a reduced width, and
+  // that is a genuine defect, but it is indistinguishable from lane sharing
+  // using only the width. Given a false FAIL destroys a seller's listing and a
+  // buyer can check their own slot in seconds, reporting it plainly beats
+  // guessing at the cause.
+  //
+  // Still measured, still printed on the certificate, and worded so a reader
+  // can act on it.
 
   if (req.fur_test.pixels_checked > 0) {
     const mismatchFraction = req.fur_test.mismatches / req.fur_test.pixels_checked;

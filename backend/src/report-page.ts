@@ -235,6 +235,10 @@ ${FAVICON_LINK}
   .spec-row { display: contents; }
   .spec-row dt, .spec-row dd { padding: 9px 0; border-top: 1px solid var(--paper-deep); margin: 0; font-size: 13.5px; }
   .spec-row:first-child dt, .spec-row:first-child dd { border-top: none; }
+  /* Context for a measurement that would otherwise read as a defect. Set in
+     the body face rather than the monospace one, because it is prose. */
+  .spec-note { display: block; margin-top: 3px; font-family: inherit; font-size: 11.5px;
+               line-height: 1.45; color: var(--ink-muted); text-align: right; word-break: normal; }
   .spec-row dt { color: var(--ink-muted); font-weight: normal; }
   .spec-row dd { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; word-break: break-all; padding-left: 20px; }
 
@@ -331,7 +335,11 @@ ${FAVICON_LINK}
         <div class="spec-row"><dt>PCI Device ID</dt><dd>${formatPciId(report.fingerprint_pci_device_id)}</dd></div>
         <div class="spec-row"><dt>VBIOS Version</dt><dd>${esc(report.fingerprint_vbios_version)}</dd></div>
         <div class="spec-row"><dt>Hardware Fingerprint</dt><dd>${esc(report.fingerprint_hash)}</dd></div>
-        <div class="spec-row"><dt>PCIe Link Width</dt><dd>x${report.pcie_link_width_current} of x${report.pcie_link_width_max} max</dd></div>
+        <div class="spec-row"><dt>PCIe Link Width</dt><dd>x${report.pcie_link_width_current} of x${report.pcie_link_width_max} max${
+          report.pcie_link_width_current < report.pcie_link_width_max
+            ? `<br><span class="spec-note">Measured in the testing machine. Usually the motherboard slot or lane sharing rather than the card, and likely to differ in another system.</span>`
+            : ""
+        }</dd></div>
         <div class="spec-row"><dt>Client Version</dt><dd>${esc(report.client_version)}</dd></div>
       </dl>
     </section>

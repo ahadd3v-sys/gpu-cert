@@ -173,6 +173,24 @@ const oneBadCell = computeVerdict({
 });
 check("a single VRAM error fails", oneBadCell.verdict === "Fail");
 
+// A healthy card in a slot that gives it eight lanes. This failed a real RTX
+// 3070, and it is the wrong thing to fail: link width describes the machine the
+// card is sitting in, not the card being sold, and consumer boards drop the
+// primary slot to x8 whenever an M.2 drive shares its lanes.
+const halfWidth = computeVerdict({
+  ...request,
+  pcie_link_width_current: 8,
+  pcie_link_width_max: 16,
+  stress_test: { ...request.stress_test, aborted_for_safety: false },
+  vram_test: { ...request.vram_test, total_errors: 0 },
+  fur_test: { ...request.fur_test, mismatches: 0, aborted_for_safety: false },
+});
+check(
+  "a card in an x8 slot is not failed for its owner's motherboard",
+  halfWidth.verdict === "Pass",
+  halfWidth.reasons.join("; ")
+);
+
 // ---------------------------------------------------------------- attestation
 
 console.log("\nattestation:");
