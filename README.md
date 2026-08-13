@@ -77,6 +77,25 @@ signup a prerequisite to testing a card.
   both the register of a user's certificates and where their upload key
   lives.
 
+## Attestation
+
+A signature only proves the server issued the document. It says nothing about
+whether a test ran, and `/api/certify` used to sign any JSON it was handed, so
+a perfect certificate for a dead card cost one HTTP request.
+
+A client running on someone else's machine can never be made provably honest,
+so `backend/lib/attestation.ts` aims at cost instead. A session is opened
+before any load is applied and consumed by the submission, so the *server*
+times the run: claiming 16 minutes of testing requires 16 minutes to pass, with
+heartbeats across them. Sessions are single-use and bound to the card's
+fingerprint. On top of that, values that are arithmetically bound to each other
+are checked (`pixels_checked` is `frames_rendered * 65536`, mismatches cannot
+exceed pixels checked), as is an absolute bandwidth ceiling no real hardware
+approaches.
+
+This raises forgery from one request to a sustained 16-minute impersonation. It
+does not make it impossible, and nothing client-side can.
+
 ## Verification
 
 The differentiator is that a buyer can check a certificate without trusting

@@ -18,6 +18,7 @@ import {
   canonicalReportString,
   canonicalReportStringFromRow,
 } from "../lib/certify.js";
+import { checkReportConsistency, checkSubmission, RENDER_PIXELS_PER_FRAME } from "../lib/attestation.js";
 import type { ReportRow } from "../lib/db.js";
 
 let failures = 0;
@@ -171,6 +172,85 @@ const oneBadCell = computeVerdict({
   fur_test: { ...request.fur_test, mismatches: 0, aborted_for_safety: false },
 });
 check("a single VRAM error fails", oneBadCell.verdict === "Fail");
+
+// ---------------------------------------------------------------- attestation
+
+console.log("\nattestation:");
+
+// Full-protocol durations, not the --fast ones the fixture above uses, since
+// several attestation rules only apply to runs long enough to be certifiable.
+const honest = structuredClone(request);
+honest.stress_test.duration_ms = 300_000;
+honest.vram_test.duration_ms = 600_000;
+honest.fur_test.duration_ms = 45_000;
+honest.fur_test.frames_rendered = 2700;
+honest.fur_test.pixels_checked = 2700 * RENDER_PIXELS_PER_FRAME;
+honest.vram_test.total_errors = 0;
+check("an honest report passes the consistency checks", checkReportConsistency(honest).length === 0, checkReportConsistency(honest).join(" | "));
+
+const wrongPixels = structuredClone(honest);
+wrongPixels.fur_test.pixels_checked = 1_000_000;
+check("pixels_checked must equal frames * 65536", checkReportConsistency(wrongPixels).length > 0);
+
+const tooManyMismatches = structuredClone(honest);
+tooManyMismatches.fur_test.mismatches = tooManyMismatches.fur_test.pixels_checked + 1;
+check("more mismatches than pixels is impossible", checkReportConsistency(tooManyMismatches).length > 0);
+
+const impossibleBandwidth = structuredClone(honest);
+impossibleBandwidth.vram_test.passes_run = 100_000_000;
+check("physically impossible VRAM bandwidth is caught", checkReportConsistency(impossibleBandwidth).length > 0);
+
+const instantWork = structuredClone(honest);
+instantWork.vram_test.duration_ms = 0;
+check("work done in zero time is caught", checkReportConsistency(instantWork).length > 0);
+
+const noTelemetry = structuredClone(honest);
+noTelemetry.stress_test.telemetry_series = [];
+check("a long stress test with no telemetry is caught", checkReportConsistency(noTelemetry).length > 0);
+
+const openedNow = new Date();
+const freshSession = {
+  id: "s1",
+  fingerprint_hash: honest.fingerprint.hash,
+  started_at: openedNow.toISOString(),
+  progress_count: 0,
+  consumed_at: null,
+};
+check(
+  "a session opened seconds ago cannot claim 16 minutes of testing",
+  !checkSubmission(honest, freshSession, openedNow.toISOString()).ok
+);
+
+const agedSession = {
+  ...freshSession,
+  started_at: new Date(openedNow.getTime() - 1_000_000).toISOString(),
+  progress_count: 9,
+};
+check(
+  "the same report is accepted once the session has actually been open that long",
+  checkSubmission(honest, agedSession, openedNow.toISOString()).ok,
+  checkSubmission(honest, agedSession, openedNow.toISOString()).problems.join(" | ")
+);
+
+check(
+  "a report with no session at all is refused",
+  !checkSubmission(honest, null, openedNow.toISOString()).ok
+);
+
+check(
+  "a consumed session cannot be reused",
+  !checkSubmission(honest, { ...agedSession, consumed_at: openedNow.toISOString() }, openedNow.toISOString()).ok
+);
+
+check(
+  "a session opened for a different card is refused",
+  !checkSubmission(honest, { ...agedSession, fingerprint_hash: "f".repeat(64) }, openedNow.toISOString()).ok
+);
+
+check(
+  "a long run with no heartbeats is refused",
+  !checkSubmission(honest, { ...agedSession, progress_count: 0 }, openedNow.toISOString()).ok
+);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);

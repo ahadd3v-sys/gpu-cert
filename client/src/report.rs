@@ -23,8 +23,19 @@ pub struct TelemetrySample {
     pub utilization_pct: u32,
 }
 
+/// Ties a submitted report to a session the backend opened before testing
+/// started. Without it the backend has no way to tell a real 16-minute run
+/// from a handcrafted JSON payload, and a certificate is only worth what that
+/// distinction is worth.
+#[derive(Serialize)]
+pub struct Attestation {
+    pub session_id: String,
+    pub nonce: String,
+}
+
 #[derive(Serialize)]
 pub struct CertifyRequest {
+    pub attestation: Attestation,
     pub client_version: &'static str,
     pub fingerprint: Fingerprint,
     pub device_name: String,
@@ -277,4 +288,102 @@ pub fn sample_from_telemetry(elapsed: Duration, t: &GpuTelemetry) -> TelemetrySa
         // out-of-range value regardless of how `t` was constructed.
         utilization_pct: t.utilization_pct.min(100),
     }
+}
+
+/// A test run's server-side session. Opened before any load is applied, kept
+/// alive by periodic check-ins, and spent by the submission at the end.
+///
+/// The check-ins are what make the timing meaningful. Without them the backend
+/// could only see a session opened and a report arriving later, which anyone
+/// could reproduce by opening a session and sleeping. With them, a forged run
+/// has to keep talking to the server across the whole duration it claims.
+pub struct TestSession {
+    pub session_id: String,
+    pub nonce: String,
+    heartbeat_interval: Duration,
+    last_heartbeat: std::cell::Cell<std::time::Instant>,
+}
+
+impl TestSession {
+    pub fn attestation(&self) -> Attestation {
+        Attestation { session_id: self.session_id.clone(), nonce: self.nonce.clone() }
+    }
+
+    /// Called from the per-tick callbacks of every test. Cheap and silent: it
+    /// only sends when the interval has elapsed, and a failure is ignored
+    /// entirely. A dropped heartbeat must never interrupt a run that is
+    /// otherwise fine, since losing 16 minutes of GPU load to a blip on the
+    /// wifi is a far worse outcome than a slightly thinner attestation.
+    pub fn heartbeat(&self) {
+        if self.last_heartbeat.get().elapsed() < self.heartbeat_interval {
+            return;
+        }
+        self.last_heartbeat.set(std::time::Instant::now());
+
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let _ = client
+            .post(format!("{BACKEND_BASE_URL}/api/session/progress"))
+            .json(&serde_json::json!({
+                "session_id": self.session_id,
+                "nonce": self.nonce,
+            }))
+            .send();
+    }
+}
+
+/// Opens the session. Failing here stops the run before any load is applied,
+/// which is deliberate: 16 minutes of testing that provably cannot be filed at
+/// the end is worse than a clear refusal up front.
+pub fn start_session(
+    client_version: &str,
+    device_name: &str,
+    fingerprint_hash: &str,
+) -> anyhow::Result<TestSession> {
+    #[derive(serde::Deserialize)]
+    struct RawSession {
+        session_id: String,
+        nonce: String,
+        #[serde(default)]
+        heartbeat_interval_ms: Option<u64>,
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(SUBMIT_TIMEOUT)
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to create HTTP client: {e}"))?;
+
+    let resp = client
+        .post(format!("{BACKEND_BASE_URL}/api/session/start"))
+        .json(&serde_json::json!({
+            "client_version": client_version,
+            "device_name": device_name,
+            "fingerprint_hash": fingerprint_hash,
+        }))
+        .send()
+        .map_err(|e| anyhow::anyhow!("couldn't reach the backend to start a test session: {e}"))?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!(
+            "backend refused to start a test session: HTTP {}. Check your connection and try again.",
+            resp.status()
+        );
+    }
+
+    let raw: RawSession = resp
+        .json()
+        .map_err(|e| anyhow::anyhow!("malformed session response: {e}"))?;
+
+    Ok(TestSession {
+        session_id: raw.session_id,
+        nonce: raw.nonce,
+        // Server-chosen, so the cadence can change without reissuing clients.
+        heartbeat_interval: Duration::from_millis(raw.heartbeat_interval_ms.unwrap_or(60_000)),
+        last_heartbeat: std::cell::Cell::new(std::time::Instant::now()),
+    })
 }

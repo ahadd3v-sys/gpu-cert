@@ -182,6 +182,10 @@ const SITE_CSS = `
 
   .footer-note { font-size: 11.5px; color: var(--ink-muted); }
   .page-footer { max-width: 760px; margin: 0 auto; padding: 18px 20px 40px; text-align: center; }
+  /* "Open source" belongs where a stranger deciding whether to run an
+     unsigned exe will look for it, which is every page rather than a
+     paragraph on the home page they may never scroll to. */
+  .footer-links { margin-top: 8px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
 
   @media (max-width: 560px) {
     .sheet { padding: 28px 20px 24px; }
@@ -244,6 +248,13 @@ ${css}
 </main>
 <footer class="page-footer">
   <p class="footer-note">GPU Cert issues signed hardware verification certificates. Every certificate is public and independently verifiable.</p>
+  <p class="footer-note footer-links">
+    <a href="https://github.com/ahadd3v-sys/gpu-cert">Open source on GitHub</a>
+    <span aria-hidden="true">&middot;</span>
+    <a href="/verify">Verify a certificate</a>
+    <span aria-hidden="true">&middot;</span>
+    <a href="/feedback">Feedback</a>
+  </p>
 </footer>
 </body>
 </html>`;

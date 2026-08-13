@@ -6,6 +6,57 @@ broken, what was tried, and why.
 
 ---
 
+## 2026-08-13 — v0.4.0: a certificate now means a test actually ran.
+
+Before this, `/api/certify` signed whatever JSON it was handed. A seller with
+a dead card could publish a flawless, genuinely-signed, genuinely-verifying
+certificate with one curl. Every other guarantee in this product sat on top of
+that, so it was worth very little. The smoke test had been quietly proving it
+for weeks: it created passing certificates from handcrafted JSON.
+
+There is no way to make a user-controlled client provably honest, so the goal
+is cost rather than proof. Three layers, in `lib/attestation.ts`:
+
+- **Internal consistency.** Some values are arithmetically bound to others.
+  `pixels_checked` must equal `frames_rendered * 65536`, because the render
+  test checks every pixel of every frame. Mismatches can't exceed pixels
+  checked. VRAM errors can't exceed elements times passes. A hand-written
+  payload trips over itself.
+- **Physical plausibility.** An absolute 40 TB/s bandwidth ceiling, well above
+  any real hardware, so it only ever catches invented numbers.
+- **Server-measured wall-clock time.** The layer that actually costs an
+  attacker something. A session is opened before any load is applied and
+  consumed by the submission; the server, not the client, decides how long it
+  was open. Claiming 16 minutes of testing requires 16 minutes, plus heartbeats
+  spread across them. Sessions are single-use and bound to the card's
+  fingerprint.
+
+Old clients get a 426 telling them to update, rather than a generic validation
+error after a 16-minute run.
+
+**Testing this needed a trick worth knowing.** Attestation is time-based, and
+tests can't wait 16 minutes, so `scripts/testkit.mjs backdate` moves a
+session's `started_at` in the throwaway database. The scripts therefore
+exercise the real ingest path with every check live, rather than a weakened
+version. The smoke test asserts both directions: a fresh session claiming 16
+minutes is refused, and the identical report is accepted once the session has
+genuinely been open that long.
+
+**Also shipped:** a LICENSE (MIT, with the memtest_vulkan zlib notice the VRAM
+shader requires), which the repo had been missing entirely — it was public but
+legally all-rights-reserved, which undercut the trust argument it existed to
+make. Plus `/feedback` and a footer that says the code is open on every page,
+since a license nobody can see is not a trust signal.
+
+**Feedback takes text, not screenshots**, deliberately. What diagnoses a
+problem here is the exe's console output, which already prints the device,
+Vulkan limits, segment layout and first mismatch. A screenshot of that console
+is a lossy, unsearchable, several-hundred-kilobyte version of something that
+pastes in as a few kilobytes. Uploads would also mean object storage, a MIME
+allowlist and moderating whatever strangers send an unauthenticated form.
+
+---
+
 ## 2026-08-13 — v0.3.1: the 49% VRAM coverage was my regression, not the hardware.
 
 Full 10-minute run on the RX 6600 passed clean (v0.3.0, report `ba8f8896`,

@@ -23,6 +23,17 @@ export const TelemetrySampleSchema = z.object({
 });
 
 export const CertifyRequestSchema = z.object({
+  // Optional in the schema, required by the route. Clients released before
+  // attestation existed don't send it, and rejecting those with a generic
+  // "invalid report payload" would tell someone who just spent 16 minutes
+  // nothing useful. Kept optional here so the route can answer with a real
+  // explanation instead.
+  attestation: z
+    .object({
+      session_id: z.string().min(1),
+      nonce: z.string().min(1),
+    })
+    .optional(),
   client_version: z.string(),
   device_name: z.string(),
   pcie_link_width_current: z.number().int().nonnegative(),

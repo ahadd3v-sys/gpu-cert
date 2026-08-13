@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+import { z } from "zod";
 import { Hono, type Context } from "hono";
 import { setCookie, deleteCookie } from "hono/cookie";
 import {
@@ -11,6 +13,13 @@ import {
   getUserByEmail,
   getUserById,
   getUserByUploadKey,
+  createTestSession,
+  getTestSession,
+  recordSessionProgress,
+  consumeTestSession,
+  countRecentSessions,
+  createFeedback,
+  countRecentFeedback,
   ensureUploadKey,
   generateUploadKey,
   setUploadKey,
@@ -21,12 +30,13 @@ import {
   canonicalReportString,
   canonicalReportStringFromRow,
 } from "../lib/certify.js";
+import { checkSubmission } from "../lib/attestation.js";
 import { signReport, verifyReportSignature } from "../lib/signing.js";
 import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/password.js";
 import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
 import { renderReportPage } from "./report-page.js";
 import { renderBadge } from "./badge.js";
-import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify } from "./pages.js";
+import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback } from "./pages.js";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpu-cert.vercel.app";
 const SESSION_COOKIE_OPTS = {
@@ -38,6 +48,21 @@ const SESSION_COOKIE_OPTS = {
 };
 
 export const app = new Hono();
+
+// Client IPs are only ever needed to spot one source hammering an endpoint,
+// never to identify anyone, so they are salted and hashed on the way in and
+// the raw address is never stored. AUTH_SECRET doubles as the salt: it already
+// exists, is already secret, and rotating it only costs a reset of the rate
+// windows.
+function hashIp(c: Context): string {
+  const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  const ip = forwarded || c.req.header("x-real-ip") || "unknown";
+  return createHash("sha256").update(`${process.env.AUTH_SECRET ?? ""}:${ip}`).digest("hex");
+}
+
+function isoMinutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
+}
 
 // `next` comes straight off the query string and is fed to a redirect after
 // login, so it has to be constrained to this site. Left open, a link like
@@ -69,6 +94,61 @@ function safeNext(next: unknown): string | null {
 // load and the report itself is still valid, so it gets stored anonymously and
 // the response says it wasn't attributed. Rejecting the submission would throw
 // away good test data over a typo.
+// Opened by the exe before any testing begins, and consumed by the submission
+// at the end. The gap between the two is measured by this server rather than
+// reported by the client, which is what stops a certificate from being
+// something you can fabricate with one request. See lib/attestation.ts.
+const SessionStartSchema = z.object({
+  client_version: z.string().max(32),
+  device_name: z.string().max(200),
+  fingerprint_hash: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+// A real run opens one session per ~16 minutes. This is far above that and
+// only bites automated abuse.
+const MAX_SESSIONS_PER_IP_PER_HOUR = 20;
+
+app.post("/api/session/start", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = SessionStartSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "invalid session request" }, 400);
+  }
+
+  const ipHash = hashIp(c);
+  if ((await countRecentSessions(ipHash, isoMinutesAgo(60))) >= MAX_SESSIONS_PER_IP_PER_HOUR) {
+    return c.json({ error: "too many test sessions started recently" }, 429);
+  }
+
+  const session = await createTestSession({
+    fingerprintHash: parsed.data.fingerprint_hash,
+    deviceName: parsed.data.device_name,
+    clientVersion: parsed.data.client_version,
+    ipHash,
+  });
+  return c.json({
+    session_id: session.id,
+    nonce: session.nonce,
+    // Told rather than assumed, so the cadence can be changed server-side
+    // without every old client becoming non-compliant.
+    heartbeat_interval_ms: 60_000,
+  });
+});
+
+app.post("/api/session/progress", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z
+    .object({ session_id: z.string().min(1), nonce: z.string().min(1) })
+    .safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "invalid progress request" }, 400);
+  }
+  const ok = await recordSessionProgress(parsed.data.session_id, parsed.data.nonce);
+  // Deliberately not an error the client should act on. A heartbeat that fails
+  // must never interrupt a test that is otherwise running fine.
+  return c.json({ ok });
+});
+
 app.post("/api/certify", async (c) => {
   const body = await c.req.json().catch(() => null);
   if (body === null) {
@@ -82,6 +162,43 @@ app.post("/api/certify", async (c) => {
   const req = parsed.data;
 
   await ensureSchema();
+
+  if (!req.attestation) {
+    return c.json(
+      {
+        error:
+          "this version of gpu-cert can no longer file certificates. Download the current release and run the test again.",
+      },
+      426
+    );
+  }
+
+  const session = await getTestSession(req.attestation.session_id, req.attestation.nonce);
+
+  // Answered specifically rather than folded into the generic refusal below.
+  // The honest way to reach this is `--resubmit` after a submission that
+  // actually landed but whose response was lost, and telling that user their
+  // report "could not be attested" would be both alarming and wrong.
+  if (session?.consumed_at) {
+    return c.json(
+      { error: "this test session has already been used, so its certificate already exists" },
+      409
+    );
+  }
+
+  const attestation = checkSubmission(req, session, new Date().toISOString());
+  if (!attestation.ok) {
+    // Logged in full, answered in one line. Handing back the list of failed
+    // checks would just be instructions for producing a payload that passes.
+    console.warn("rejected report", { problems: attestation.problems });
+    return c.json({ error: "this report could not be attested to a real test run" }, 403);
+  }
+
+  // Consumed before the report is written, so two submissions racing on one
+  // session can't both produce a certificate.
+  if (!(await consumeTestSession(req.attestation.session_id))) {
+    return c.json({ error: "this test session has already been used" }, 409);
+  }
 
   const bearer = c.req.header("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
   const keyOwner = bearer ? await getUserByUploadKey(bearer) : null;
@@ -237,6 +354,59 @@ app.get("/.well-known/gpu-cert-key.pem", (c) => {
     "content-type": "application/x-pem-file; charset=utf-8",
     "cache-control": "public, max-age=3600",
   });
+});
+
+const MAX_FEEDBACK_PER_IP_PER_HOUR = 5;
+
+app.get("/feedback", async (c) => {
+  const userId = await getSessionUserId(c);
+  return c.html(renderFeedback({ loggedIn: userId !== null, sent: c.req.query("sent") === "1" }));
+});
+
+app.post("/feedback", async (c) => {
+  const userId = await getSessionUserId(c);
+  const loggedIn = userId !== null;
+  const form = await c.req.parseBody();
+
+  // Honeypot. A hidden field that a person never sees and a form-filling bot
+  // almost always completes. Answered with the same success page rather than
+  // an error, so whatever filled it has no signal that it was caught.
+  if (String(form.website ?? "").trim() !== "") {
+    return c.redirect("/feedback?sent=1");
+  }
+
+  const message = String(form.message ?? "").trim();
+  if (message.length < 10) {
+    return c.html(
+      renderFeedback({ loggedIn, error: "Tell us a little more about what happened." }),
+      400
+    );
+  }
+
+  const ipHash = hashIp(c);
+  if ((await countRecentFeedback(ipHash, isoMinutesAgo(60))) >= MAX_FEEDBACK_PER_IP_PER_HOUR) {
+    return c.html(
+      renderFeedback({ loggedIn, error: "That's a lot of feedback at once. Try again in an hour." }),
+      429
+    );
+  }
+
+  // Truncated rather than rejected: someone who pasted a very long log should
+  // still get their report filed, minus the tail.
+  const trim = (value: unknown, max: number): string | null => {
+    const text = String(value ?? "").trim();
+    return text === "" ? null : text.slice(0, max);
+  };
+
+  await createFeedback({
+    message: message.slice(0, 4000),
+    contact: trim(form.contact, 254),
+    reportReference: trim(form.report_reference, 64),
+    consoleOutput: trim(form.console_output, 20000),
+    ipHash,
+  });
+
+  return c.redirect("/feedback?sent=1");
 });
 
 app.get("/", async (c) => {

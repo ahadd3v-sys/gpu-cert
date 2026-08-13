@@ -10,7 +10,8 @@ import { esc } from "./html.js";
 import { sitePage } from "./theme.js";
 import type { ReportRow } from "../lib/db.js";
 
-const DOWNLOAD_URL = "https://github.com/ahadd3v-sys/gpu-cert/releases/latest/download/gpu-cert.exe";
+const REPO_URL = "https://github.com/ahadd3v-sys/gpu-cert";
+const DOWNLOAD_URL = `${REPO_URL}/releases/latest/download/gpu-cert.exe`;
 
 function certificateNumber(id: string): string {
   return `GPUC-${id.slice(0, 8).toUpperCase()}`;
@@ -512,6 +513,98 @@ export function renderVerify(opts: {
       A valid signature proves the certificate came from GPU Cert and has not been edited. It does not prove the person showing it to you owns that card, so check that the hardware fingerprint matches the card you are actually being sold.
       <br><br>
       To check it without trusting this page, the public key is published at <code><a href="/.well-known/gpu-cert-key.pem">/.well-known/gpu-cert-key.pem</a></code>.
+    </p>`,
+  });
+}
+
+// ------------------------------------------------------------- feedback
+
+// Text only, no file uploads, and that is a considered choice rather than a
+// missing feature. What actually diagnoses a problem with this product is the
+// exe's console output, which is text: it already prints the device, the
+// Vulkan limits, the segment layout, per-pass error counts and the first
+// mismatch. A screenshot of that same console is a lossy, unsearchable,
+// several-hundred-kilobyte version of something that pastes in as a few
+// kilobytes and can be grepped later.
+//
+// Uploads would also mean object storage, a size and MIME allowlist, and
+// somebody moderating whatever strangers upload to an unauthenticated form.
+// None of that earns its place before the first real user.
+const FEEDBACK_CSS = `
+  .feedback-head { margin-bottom: 22px; }
+  .field textarea {
+    width: 100%;
+    font-family: "Inter", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink);
+    background: var(--paper-bright, #f4f2ec);
+    border: 1px solid var(--paper-deep);
+    border-radius: 4px;
+    padding: 10px 12px;
+    resize: vertical;
+  }
+  .field textarea.console {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+  }
+  .field-optional { font-weight: normal; color: var(--ink-muted); letter-spacing: 0; text-transform: none; font-size: 10.5px; }
+  /* Bots fill every field they find. People never see this one. */
+  .trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  .notice-pass {
+    border-left: 3px solid var(--pass);
+    background: rgba(63, 108, 79, 0.07);
+    color: var(--pass);
+    font-size: 13.5px;
+    padding: 9px 14px;
+    margin: 0 0 20px;
+  }
+  .feedback-alt { font-size: 12.5px; color: var(--ink-muted); margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--paper-deep); line-height: 1.6; }
+`;
+
+export function renderFeedback(opts: {
+  loggedIn: boolean;
+  error?: string;
+  sent?: boolean;
+}): string {
+  return sitePage({
+    title: "Feedback",
+    nav: opts.loggedIn ? loggedInNav() : loggedOutNav("/feedback"),
+    width: 720,
+    css: FEEDBACK_CSS,
+    body: `
+    <div class="feedback-head">
+      <p class="eyebrow">Feedback</p>
+      <h1 class="display" style="font-size: 30px;">Tell us what went wrong.</h1>
+      <p class="statement" style="margin-bottom: 0;">Especially if the tool refused to run, failed a card you believe is healthy, or passed one you know is not. Every one of those is a bug worth chasing, and the ones found so far all came from someone running it on real hardware.</p>
+    </div>
+    ${opts.sent ? `<p class="notice-pass">Sent. Thank you, this genuinely helps.</p>` : ""}
+    ${opts.error ? `<p class="notice-fail">${esc(opts.error)}</p>` : ""}
+    <form method="post" action="/feedback">
+      <div class="field">
+        <label for="message">What happened</label>
+        <textarea id="message" name="message" rows="6" required maxlength="4000"></textarea>
+      </div>
+      <div class="field">
+        <label for="console_output">Console output <span class="field-optional">optional, paste it straight from the window</span></label>
+        <textarea id="console_output" name="console_output" class="console" rows="6" maxlength="20000"></textarea>
+      </div>
+      <div class="field">
+        <label for="report_reference">Certificate number <span class="field-optional">optional</span></label>
+        <input id="report_reference" name="report_reference" placeholder="GPUC-1A2B3C4D" maxlength="64" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="contact">Email <span class="field-optional">optional, only if you want a reply</span></label>
+        <input id="contact" type="email" name="contact" maxlength="254" autocomplete="email">
+      </div>
+      <div class="trap" aria-hidden="true">
+        <label for="website">Leave this empty</label>
+        <input id="website" name="website" tabindex="-1" autocomplete="off">
+      </div>
+      <button type="submit" class="btn">Send feedback</button>
+    </form>
+    <p class="feedback-alt">
+      The whole client and server are open source. If you would rather file a bug where you can watch it get fixed, or you want to read exactly what the tool does to your card before running it, that is all at <a href="${esc(REPO_URL)}">${esc(REPO_URL.replace("https://", ""))}</a>.
     </p>`,
   });
 }

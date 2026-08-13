@@ -63,8 +63,38 @@ CREATE TABLE IF NOT EXISTS reports (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Opened before a test run starts and consumed by the submission at the end.
+-- Its whole purpose is to put a clock the client doesn't control between those
+-- two moments: see lib/attestation.ts.
+CREATE TABLE IF NOT EXISTS test_sessions (
+  id TEXT PRIMARY KEY,
+  nonce TEXT NOT NULL,
+  fingerprint_hash TEXT NOT NULL,
+  device_name TEXT NOT NULL,
+  client_version TEXT NOT NULL,
+  ip_hash TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_progress_at TEXT,
+  progress_count INTEGER NOT NULL DEFAULT 0,
+  consumed_at TEXT
+);
+
+-- Text only, deliberately: see the note in app.ts's /feedback route on why
+-- there are no file uploads.
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  message TEXT NOT NULL,
+  contact TEXT,
+  report_reference TEXT,
+  console_output TEXT,
+  ip_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_reports_fingerprint_hash ON reports (fingerprint_hash);
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports (user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_ip ON test_sessions (ip_hash, started_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback (created_at);
 
 -- Enforces upload_key uniqueness on DBs where the column arrived via ALTER
 -- (SQLite can't add a UNIQUE column in place). A unique index permits
@@ -287,4 +317,116 @@ export async function ensureUploadKey(user: UserRow): Promise<string> {
   const uploadKey = generateUploadKey();
   await setUploadKey(user.id, uploadKey);
   return uploadKey;
+}
+
+// ------------------------------------------------------------ test sessions
+
+export interface TestSessionRow {
+  id: string;
+  nonce: string;
+  fingerprint_hash: string;
+  started_at: string;
+  progress_count: number;
+  consumed_at: string | null;
+}
+
+export async function createTestSession(opts: {
+  fingerprintHash: string;
+  deviceName: string;
+  clientVersion: string;
+  ipHash: string;
+}): Promise<{ id: string; nonce: string }> {
+  await ensureSchema();
+  const id = crypto.randomUUID();
+  // 256 bits. The session id alone would do, but a separate secret means the
+  // id can be logged or referenced without granting the ability to submit
+  // against that session.
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+  await db().execute({
+    sql: `INSERT INTO test_sessions (id, nonce, fingerprint_hash, device_name, client_version, ip_hash, started_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, nonce, opts.fingerprintHash, opts.deviceName, opts.clientVersion, opts.ipHash, new Date().toISOString()],
+  });
+  return { id, nonce };
+}
+
+export async function getTestSession(id: string, nonce: string): Promise<TestSessionRow | null> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT id, nonce, fingerprint_hash, started_at, progress_count, consumed_at
+          FROM test_sessions WHERE id = ? AND nonce = ?`,
+    args: [id, nonce],
+  });
+  const row = res.rows[0] as unknown as TestSessionRow | undefined;
+  if (!row) return null;
+  return { ...row, progress_count: Number(row.progress_count) };
+}
+
+/// Returns false if the session doesn't exist, the nonce is wrong, or it has
+/// already been consumed, so a client can't keep a finished session alive.
+export async function recordSessionProgress(id: string, nonce: string): Promise<boolean> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `UPDATE test_sessions
+          SET progress_count = progress_count + 1, last_progress_at = ?
+          WHERE id = ? AND nonce = ? AND consumed_at IS NULL`,
+    args: [new Date().toISOString(), id, nonce],
+  });
+  return res.rowsAffected > 0;
+}
+
+/// Atomic, and the reason submission order matters: consuming before inserting
+/// the report means two simultaneous submissions against one session can't both
+/// win. A conditional UPDATE is the lock; SQLite gives us the atomicity free.
+export async function consumeTestSession(id: string): Promise<boolean> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `UPDATE test_sessions SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`,
+    args: [new Date().toISOString(), id],
+  });
+  return res.rowsAffected > 0;
+}
+
+export async function countRecentSessions(ipHash: string, sinceIso: string): Promise<number> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT COUNT(*) AS n FROM test_sessions WHERE ip_hash = ? AND started_at > ?`,
+    args: [ipHash, sinceIso],
+  });
+  return Number((res.rows[0] as unknown as { n: number }).n);
+}
+
+// ---------------------------------------------------------------- feedback
+
+export async function createFeedback(opts: {
+  message: string;
+  contact: string | null;
+  reportReference: string | null;
+  consoleOutput: string | null;
+  ipHash: string;
+}): Promise<void> {
+  await ensureSchema();
+  await db().execute({
+    sql: `INSERT INTO feedback (id, message, contact, report_reference, console_output, ip_hash)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [
+      crypto.randomUUID(),
+      opts.message,
+      opts.contact,
+      opts.reportReference,
+      opts.consoleOutput,
+      opts.ipHash,
+    ],
+  });
+}
+
+export async function countRecentFeedback(ipHash: string, sinceIso: string): Promise<number> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT COUNT(*) AS n FROM feedback WHERE ip_hash = ? AND created_at > ?`,
+    args: [ipHash, sinceIso],
+  });
+  return Number((res.rows[0] as unknown as { n: number }).n);
 }

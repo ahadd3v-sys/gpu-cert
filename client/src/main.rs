@@ -172,6 +172,15 @@ fn run() -> anyhow::Result<()> {
     // by default — the opposite of what the user chose.
     let upload_key = account::prompt_for_key();
 
+    // Opened before any load is applied. The backend times the gap between
+    // this and the submission, which is what stops a certificate from being
+    // something you can produce with a single request instead of a real run.
+    let session = report::start_session(
+        env!("CARGO_PKG_VERSION"),
+        &telemetry.name,
+        &fingerprint.hash,
+    )?;
+
     println!("Running stress test ({}s)...", stress_duration.as_secs());
     let mut telemetry_series = Vec::new();
     let stress_started = Instant::now();
@@ -179,6 +188,7 @@ fn run() -> anyhow::Result<()> {
         // Re-sampling telemetry every tick is deliberately cheap (a few
         // NVML calls) relative to the dispatch itself, so it doesn't skew
         // the load being measured.
+        session.heartbeat();
         match gpu.read_primary_gpu() {
             Ok(sample_telemetry) => {
                 let sample = sample_from_telemetry(elapsed, &sample_telemetry);
@@ -221,6 +231,7 @@ fn run() -> anyhow::Result<()> {
                 total_errors,
                 elapsed.as_secs()
             ));
+            session.heartbeat();
             match gpu.read_primary_gpu() {
                 Ok(t) => {
                     let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
@@ -245,6 +256,7 @@ fn run() -> anyhow::Result<()> {
     println!("Running render integrity test ({}s)...", fur_duration.as_secs());
     let fur_result = vulkan::fur_test::run(&ctx, fur_duration, |elapsed| {
         print_progress(&format!("  {:>3}s", elapsed.as_secs()));
+        session.heartbeat();
         match gpu.read_primary_gpu() {
             Ok(t) => {
                 let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
@@ -264,6 +276,7 @@ fn run() -> anyhow::Result<()> {
     );
 
     let request = CertifyRequest {
+        attestation: session.attestation(),
         client_version: env!("CARGO_PKG_VERSION"),
         fingerprint,
         device_name: telemetry.name.clone(),
