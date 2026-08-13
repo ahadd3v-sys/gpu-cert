@@ -132,6 +132,14 @@ Three tests, each documented and scored — see `backend/lib/certify.ts`
   segment is filled before any segment is verified, so a verify can never be
   served out of cache from the fill that just happened, and each dispatch is
   chunked short enough not to trip Windows' TDR watchdog.
+
+  How much gets tested is bounded by what is actually free, not by the card's
+  size, so `VK_EXT_memory_budget` is used to ask the driver directly rather
+  than discovering the ceiling by allocating until something fails (which
+  understates it, since the first refusal comes well before the real limit).
+  Coverage is printed as a percentage during the run and shown on the
+  certificate, because "0 errors" over 49% of a card is a materially weaker
+  claim than over 85% and the certificate should not blur the two.
 - **Render integrity test** (`client/src/vulkan/fur_test.rs`) — renders a
   deterministic fullscreen fragment shader and compares **every pixel of
   every frame**, bit for bit, against a CPU-computed reference. Catches

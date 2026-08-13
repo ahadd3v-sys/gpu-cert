@@ -117,15 +117,28 @@ pub fn run(
     }
     let max_workgroups_per_dispatch = ctx.max_compute_workgroups_x.min(DISPATCH_CHUNK_WORKGROUPS);
     let max_elements_per_dispatch = max_workgroups_per_dispatch.saturating_mul(WORKGROUP_SIZE);
+    let coverage_pct = if vram_total_bytes > 0 {
+        (buffer_size as f64 / vram_total_bytes as f64) * 100.0
+    } else {
+        0.0
+    };
     println!(
-        "  (VRAM test: {} MB across {} segment(s), max {} MB per segment; \
-         device limits: maxStorageBufferRange {} MB, maxMemoryAllocationSize {} MB)",
+        "  testing {} MB of {} MB VRAM ({:.0}%) across {} segment(s)",
         buffer_size / 1_048_576,
+        vram_total_bytes / 1_048_576,
+        coverage_pct,
         segments.len(),
-        segments.iter().map(|s| s.buffer.size).max().unwrap_or(0) / 1_048_576,
-        ctx.max_storage_buffer_range as u64 / 1_048_576,
-        ctx.max_memory_allocation_size / 1_048_576,
     );
+    // Coverage is on the certificate, so a low number needs explaining to the
+    // person running it while they can still do something about it. Anything
+    // already resident (browser, compositor, another game) is memory this
+    // test cannot reach, and no amount of retrying changes that.
+    if coverage_pct < 60.0 {
+        println!(
+            "  note: other applications are holding VRAM, so less of the card can be tested. \
+             Closing them and re-running will cover more."
+        );
+    }
 
     let started = Instant::now();
     let mut passes_run = 0u32;
@@ -257,7 +270,27 @@ fn allocate_segments(
     // telemetry's total counts memory it won't. Trust the smaller.
     let reported_target = (vram_total_bytes as f64 * test_fraction) as u64;
     let heap_target = (ctx.device_local_heap_size as f64 * test_fraction) as u64;
-    let target = reported_target.min(heap_target);
+    let mut target = reported_target.min(heap_target);
+
+    // Neither number above accounts for what is already resident: a
+    // compositor, a browser and a couple of GPU-accelerated apps can easily
+    // hold several GB. VK_EXT_memory_budget reports what this process can
+    // still allocate right now, which is the only figure that reflects that.
+    //
+    // Without it the fallback is to allocate until something fails, which
+    // systematically *understates* coverage — the first refusal ends the
+    // loop well before the real ceiling. On an 8 GB RX 6600 with a desktop
+    // running, that stopped at 4032 MB (49% of the card) when far more was
+    // actually available.
+    //
+    // Held slightly under the budget rather than at it, since the spec says
+    // allocations at or beyond it "may fail or cause performance
+    // degradation", and a memory test that pushes the driver into swapping
+    // would be measuring the wrong thing.
+    const BUDGET_UTILISATION: f64 = 0.92;
+    if let Some(available) = ctx.available_device_local_bytes() {
+        target = target.min((available as f64 * BUDGET_UTILISATION) as u64);
+    }
 
     // Whole workgroups only, so no dispatch has a partially-covered tail.
     let bytes_per_workgroup = WORKGROUP_SIZE as u64 * BYTES_PER_ELEMENT;
@@ -281,34 +314,35 @@ fn allocate_segments(
 
     let mut segments: Vec<Segment> = Vec::new();
     let mut allocated = 0u64;
+    // Shrinks on failure and never grows back. A size that just failed will
+    // not fit a moment later either, so retrying it for every remaining
+    // segment would only burn time on allocations already known to fail.
+    let mut cap = segment_cap;
     while allocated < target {
-        let mut want = align_down((target - allocated).min(segment_cap));
+        let want = align_down((target - allocated).min(cap));
         if want == 0 {
             break;
         }
-        loop {
-            match GpuBuffer::new(
-                ctx,
-                want,
-                vk::BufferUsageFlags::STORAGE_BUFFER,
-                ctx.device_local_memory_type,
-            ) {
-                Ok(buffer) => {
-                    allocated += want;
-                    segments.push(Segment {
-                        element_count: (want / BYTES_PER_ELEMENT) as u32,
-                        buffer,
-                    });
-                    break;
-                }
-                Err(_) if want / 2 >= MIN_SEGMENT_BYTES => {
-                    want = align_down(want / 2);
-                }
-                Err(_) => {
-                    // Out of room. Test what we have.
-                    return finish_segments(segments);
-                }
+        match GpuBuffer::new(
+            ctx,
+            want,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            ctx.device_local_memory_type,
+        ) {
+            Ok(buffer) => {
+                allocated += want;
+                segments.push(Segment {
+                    element_count: (want / BYTES_PER_ELEMENT) as u32,
+                    buffer,
+                });
             }
+            // Halve and keep going rather than stopping at the first refusal.
+            // Fragmentation means a 1 GiB request can fail while several
+            // 256 MB ones still succeed, and the difference is coverage.
+            Err(_) if cap / 2 >= MIN_SEGMENT_BYTES => {
+                cap = align_down(cap / 2);
+            }
+            Err(_) => break,
         }
     }
 

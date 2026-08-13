@@ -6,6 +6,39 @@ broken, what was tried, and why.
 
 ---
 
+## 2026-08-13 — v0.2.0 confirmed working on the RX 6600. v0.2.1 raises VRAM coverage.
+
+First clean run: **Pass, 0 VRAM errors, 0 render mismatches** (report
+`4d6fe4d4`, `--fast`). Both fixes are confirmed on real hardware.
+
+Two numbers are worth keeping, because they are how you tell a real pass from
+a vacuous one:
+
+- **VRAM throughput is now 177 GB/s, 79% of the RX 6600's 224 GB/s peak.**
+  Plausible. The failing v0.1.7/v0.1.8 runs implied 226 GB/s, i.e. above
+  theoretical peak, which was the giveaway that the test was not touching the
+  memory it claimed. If this ratio ever goes above ~90% again, suspect
+  coverage rather than celebrating the speed.
+- **Render checked 65,536 pixels/frame exactly** (206,503,936 over 3,151
+  frames), 0 mismatches at zero tolerance. The old float test would have
+  produced roughly 85 wrong pixels per frame on this same healthy card.
+
+**What was still wrong:** coverage was 4032 MB, 49% of the card, against a
+target of 85%. Not `--fast`-related — segments are allocated once, before the
+timing loop, so duration changes pass count and nothing else. The cause was
+the allocator stopping at the first refused allocation, having never asked
+how much VRAM was actually free.
+
+v0.2.1 fixes both halves of that: it enables **VK_EXT_memory_budget** and
+targets 92% of what the driver says is actually available (the spec's
+`heapBudget` minus `heapUsage`, queried live since the values are explicitly
+not invariant), and on a refused allocation it now halves the segment size
+and continues instead of giving up, since fragmentation can refuse 1 GiB
+while several 256 MB requests still succeed. The console now prints coverage
+as a percentage and says so when other applications are the limiting factor.
+
+---
+
 ## 2026-08-13 — v0.2.0 shipped. Both root causes fixed, plus a verification surface.
 
 Everything in the entry below is now addressed. What changed:
