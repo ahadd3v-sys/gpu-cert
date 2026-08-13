@@ -107,40 +107,146 @@ const BACKEND_BASE_URL: &str = "https://gpu-cert.vercel.app";
 /// copies off their dashboard. It's optional on purpose: the tool is fully
 /// usable without an account, and a report submitted without a key is stored
 /// public-but-unattached, claimable from its page later.
+/// A whole run is ~16 minutes of GPU load, so the submission at the end is
+/// the most expensive thing in the program to lose. These exist because a
+/// dropped Wi-Fi packet at minute 16 should not throw that away.
+const SUBMIT_ATTEMPTS: u32 = 4;
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Where an unsent report is parked so `--resubmit` can pick it up.
+fn pending_report_path() -> Option<std::path::PathBuf> {
+    Some(crate::account::config_dir()?.join("pending-report.json"))
+}
+
 pub fn submit(req: &CertifyRequest, upload_key: Option<&str>) -> anyhow::Result<CertifyResponse> {
-    let client = reqwest::blocking::Client::new();
-    let mut builder = client.post(format!("{BACKEND_BASE_URL}/api/certify")).json(req);
-    if let Some(key) = upload_key {
-        builder = builder.bearer_auth(key);
+    let payload = serde_json::to_string(req)
+        .map_err(|e| anyhow::anyhow!("failed to serialize report: {e}"))?;
+
+    match post_payload(&payload, upload_key) {
+        Ok(resp) => {
+            // Only meaningful if a previous run left one behind.
+            if let Some(path) = pending_report_path() {
+                let _ = std::fs::remove_file(path);
+            }
+            Ok(resp)
+        }
+        Err(e) => {
+            // The test results are still perfectly good; only the delivery
+            // failed. Keeping them means the user can retry in a second
+            // instead of re-running the card for another 16 minutes.
+            match save_pending(&payload) {
+                Some(path) => Err(anyhow::anyhow!(
+                    "{e}\n\n  Your test results were saved to {}\n  \
+                     Run `gpu-cert.exe --resubmit` once you're back online to file them. \
+                     You do not need to run the tests again.",
+                    path.display()
+                )),
+                None => Err(e),
+            }
+        }
+    }
+}
+
+fn save_pending(payload: &str) -> Option<std::path::PathBuf> {
+    let path = pending_report_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok()?;
+    }
+    std::fs::write(&path, payload).ok()?;
+    Some(path)
+}
+
+/// Files a report left behind by an earlier run whose submission failed.
+pub fn resubmit(upload_key: Option<&str>) -> anyhow::Result<Option<CertifyResponse>> {
+    let Some(path) = pending_report_path() else {
+        return Ok(None);
+    };
+    let Ok(payload) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+
+    let response = post_payload(&payload, upload_key)?;
+    let _ = std::fs::remove_file(&path);
+    Ok(Some(response))
+}
+
+/// Retries on the failures that are worth retrying and stops on the ones
+/// that aren't. A timeout, a refused connection or a 5xx are all plausibly
+/// transient. A 4xx means the backend understood the request and rejected
+/// it, so sending the identical bytes again would only fail identically.
+fn post_payload(payload: &str, upload_key: Option<&str>) -> anyhow::Result<CertifyResponse> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(SUBMIT_TIMEOUT)
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to create HTTP client: {e}"))?;
+
+    let mut last_error = None;
+    for attempt in 1..=SUBMIT_ATTEMPTS {
+        if attempt > 1 {
+            // 2s, 4s, 8s. Long enough for a flaky link to come back, short
+            // enough that nobody walks away from the console.
+            let backoff = Duration::from_secs(1 << (attempt - 1));
+            println!("  retrying in {}s (attempt {attempt} of {SUBMIT_ATTEMPTS})...", backoff.as_secs());
+            std::thread::sleep(backoff);
+        }
+
+        let mut builder = client
+            .post(format!("{BACKEND_BASE_URL}/api/certify"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(payload.to_string());
+        if let Some(key) = upload_key {
+            builder = builder.bearer_auth(key);
+        }
+
+        let resp = match builder.send() {
+            Ok(r) => r,
+            Err(e) => {
+                last_error = Some(anyhow::anyhow!("failed to reach backend: {e}"));
+                continue;
+            }
+        };
+
+        let status = resp.status();
+        if status.is_client_error() {
+            let detail = resp.text().unwrap_or_default();
+            anyhow::bail!(
+                "backend rejected report: HTTP {status}{}",
+                if detail.is_empty() { String::new() } else { format!(" — {detail}") }
+            );
+        }
+        if !status.is_success() {
+            last_error = Some(anyhow::anyhow!("backend error: HTTP {status}"));
+            continue;
+        }
+
+        #[derive(serde::Deserialize)]
+        struct RawResponse {
+            report_url: String,
+            badge_url: String,
+            #[serde(default)]
+            filed_to: Option<String>,
+            #[serde(default)]
+            upload_key_recognized: Option<bool>,
+        }
+        let raw: RawResponse = match resp.json() {
+            Ok(r) => r,
+            Err(e) => {
+                last_error = Some(anyhow::anyhow!("malformed backend response: {e}"));
+                continue;
+            }
+        };
+
+        return Ok(CertifyResponse {
+            report_url: raw.report_url,
+            badge_url: raw.badge_url,
+            filed_to: raw.filed_to,
+            upload_key_recognized: raw.upload_key_recognized,
+        });
     }
 
-    let resp = builder
-        .send()
-        .map_err(|e| anyhow::anyhow!("failed to reach backend: {e}"))?;
-
-    if !resp.status().is_success() {
-        anyhow::bail!("backend rejected report: HTTP {}", resp.status());
-    }
-
-    #[derive(serde::Deserialize)]
-    struct RawResponse {
-        report_url: String,
-        badge_url: String,
-        #[serde(default)]
-        filed_to: Option<String>,
-        #[serde(default)]
-        upload_key_recognized: Option<bool>,
-    }
-    let raw: RawResponse = resp
-        .json()
-        .map_err(|e| anyhow::anyhow!("malformed backend response: {e}"))?;
-
-    Ok(CertifyResponse {
-        report_url: raw.report_url,
-        badge_url: raw.badge_url,
-        filed_to: raw.filed_to,
-        upload_key_recognized: raw.upload_key_recognized,
-    })
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("could not submit the report"))
+        .context(format!("gave up after {SUBMIT_ATTEMPTS} attempts")))
 }
 
 pub fn build_stress_report(

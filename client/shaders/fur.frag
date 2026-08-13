@@ -1,41 +1,57 @@
 #version 450
 
-// Graphics-pipeline load test, conceptually like FurMark's "fur" render:
-// heavy per-pixel overdraw with enough ALU work per fragment to load the
-// ROP/texture/shading path the compute stress kernel doesn't exercise.
+// Render-integrity load: a long dependent chain of integer ALU work per
+// pixel, pushed through the real graphics pipeline (rasterizer, fragment
+// shader, ROP, framebuffer) so a defect anywhere along it shows up as a
+// wrong value.
+//
+// Integer, not floating point, and that is the whole point of this shader.
+//
+// The previous version accumulated 4000 float sin/cos terms and emitted
+// fract(acc), with the CPU recomputing the same formula to compare against.
+// That cannot work, for two independent reasons:
+//
+//   1. GPU and CPU float results legitimately differ. Compilers may contract
+//      `a*b + c` into a single FMA (one rounding instead of two), and Vulkan
+//      allows several ULP of error on transcendentals where CPU libm is
+//      under one. Over 4000 iterations that compounds.
+//   2. fract() of a large accumulator is a discontinuity. Whenever acc lands
+//      near an integer, an arbitrarily small difference flips the output
+//      between ~0.999 and ~0.000. No tolerance below 1.0 absorbs that, and a
+//      tolerance of 1.0 accepts everything.
+//
+// On real hardware that produced a ~2.7% false mismatch rate on a healthy
+// card. Integer ops have none of this freedom: xor, shift, multiply and add
+// on uint are exact and wrap mod 2^32 on every conformant implementation, so
+// the CPU reference and the GPU must agree bit for bit. The comparison is
+// therefore exact, with no epsilon to tune, and it means the same thing on
+// every GPU rather than being calibrated to one.
 
-layout(location = 0) out vec4 outColor;
+layout(location = 0) out uint outValue;
 
 layout(push_constant) uniform Push {
     uint iterations;
-    float time;
+    uint seed;
 } pc;
 
-const float TAU = 6.283185307179586;
-
-// GPU hardware sin/cos and CPU libm sin/cos are only guaranteed to agree
-// closely for well-conditioned (small) arguments — argument-reduction
-// precision for huge inputs is implementation-defined per the GLSL/IEEE-754
-// spec, not something a "wrong answer under load" check can rely on. With
-// 4000 iterations this loop's raw arguments reach into the tens of
-// thousands of radians, which showed up as real GPU/CPU divergence (not a
-// hardware defect) on the first real run. Wrapping into [0, TAU) before
-// every trig call keeps the same iteration count / ALU workload but makes
-// both sides' sin/cos agree tightly, the way the correctness check needs.
-float wrapAngle(float x) {
-    return mod(x, TAU);
-}
-
 void main() {
-    vec2 uv = gl_FragCoord.xy * 0.01;
-    vec3 acc = vec3(0.0);
+    // gl_FragCoord is the pixel center (integer + 0.5), so truncating gives
+    // the exact integer pixel coordinate.
+    uvec2 p = uvec2(gl_FragCoord.xy);
+
+    // Distinct starting value per pixel, so the 65536 pixels of a frame
+    // exercise 65536 different operand sequences rather than one repeated.
+    uint h = pc.seed ^ (p.x * 0x9E3779B9u) ^ (p.y * 0x85EBCA6Bu);
 
     for (uint i = 0u; i < pc.iterations; i++) {
-        float f = float(i) + pc.time;
-        acc.x += sin(wrapAngle(uv.x * f)) * cos(wrapAngle(uv.y * f));
-        acc.y += cos(wrapAngle(uv.x * f * 1.3)) * sin(wrapAngle(uv.y * f * 0.7));
-        acc.z += sin(wrapAngle((uv.x + uv.y) * f * 0.5));
+        // xorshift32, then an LCG step. The LCG matters beyond mixing: plain
+        // xorshift has zero as an absorbing state, and adding a non-zero
+        // constant guarantees the chain can never get stuck there.
+        h ^= h << 13;
+        h ^= h >> 17;
+        h ^= h << 5;
+        h = h * 0x2545F491u + 0x6C078965u;
     }
 
-    outColor = vec4(fract(acc), 1.0);
+    outValue = h;
 }

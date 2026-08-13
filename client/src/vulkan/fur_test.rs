@@ -20,22 +20,28 @@ use super::{FUR_FRAG_SPV, FUR_VERT_SPV};
 
 const COLOR_WIDTH: u32 = 256;
 const COLOR_HEIGHT: u32 = 256;
-const COLOR_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
-// R8G8B8A8_UNORM color-attachment support is part of Vulkan's mandatory
-// format support, unlike floating-point attachment formats — this needs to
-// run correctly on whatever GPU a reseller happens to have, not just
-// high-end ones, so portability wins over the extra precision an SFLOAT
-// attachment would give.
-const FUR_ITERATIONS: u32 = 4000;
-// 8x8 grid spread across the image: enough spatial coverage to catch a
-// localized ROP/texture-unit defect without re-deriving the shader's math
-// (sin/cos per sample) for all 65536 pixels every frame.
-const SAMPLE_GRID: u32 = 8;
-// Real defects produce many wrong pixels, not one borderline pixel near a
-// legitimate floating-point/quantization edge — this tolerates a small
-// number of edge-case mismatches without being blind to systematic
-// corruption, which blows past this by orders of magnitude.
-const MISMATCH_EPSILON: f32 = 0.02;
+// R32_UINT, and specifically an integer format. A UNORM attachment would
+// quantize the shader's output to 8 bits per channel and reintroduce exactly
+// the "is this difference a defect or a rounding edge" ambiguity this test
+// was rewritten to eliminate. VK_FORMAT_R32_UINT carries mandatory
+// COLOR_ATTACHMENT_BIT support in the spec's Mandatory Format Support
+// tables, so it is available on every conformant implementation, not just
+// on high-end cards.
+const COLOR_FORMAT: vk::Format = vk::Format::R32_UINT;
+const PIXEL_COUNT: usize = (COLOR_WIDTH * COLOR_HEIGHT) as usize;
+
+/// Length of the per-pixel dependent integer chain. Sets how much ALU work
+/// each fragment costs, and (multiplied by PIXEL_COUNT) how long the CPU
+/// takes to build one reference image.
+const FUR_ITERATIONS: u32 = 2000;
+
+/// Distinct reference images, cycled frame to frame. One would already be a
+/// valid test, since a frame is deterministic and the GPU recomputes it from
+/// scratch every time; more than one just widens the set of operand
+/// sequences the card has to get right. Each costs one full CPU pass to
+/// build up front (PIXEL_COUNT * FUR_ITERATIONS iterations), so this trades
+/// directly against startup time.
+const REFERENCE_SEEDS: [u32; 2] = [0x5EED_1234, 0xA5A5_C3C3];
 
 pub struct FurTestResult {
     pub frames_rendered: u32,
@@ -48,7 +54,7 @@ pub struct FurTestResult {
 #[repr(C)]
 struct PushConstants {
     iterations: u32,
-    time: f32,
+    seed: u32,
 }
 
 struct FurPipeline {
@@ -299,8 +305,8 @@ impl FurPipeline {
     }
 
     /// Renders one frame, copies it to the host-visible readback buffer,
-    /// and returns the raw RGBA8 bytes (tightly packed, width*height*4).
-    fn render_frame(&self, ctx: &VulkanContext, push: &PushConstants) -> anyhow::Result<Vec<u8>> {
+    /// and returns it as one u32 per pixel, row-major.
+    fn render_frame(&self, ctx: &VulkanContext, push: &PushConstants) -> anyhow::Result<Vec<u32>> {
         unsafe {
             let cmd_alloc_info = vk::CommandBufferAllocateInfo::default()
                 .command_pool(self.command_pool)
@@ -318,7 +324,9 @@ impl FurPipeline {
                 .begin_command_buffer(cmd, &begin_info)
                 .map_err(|e| anyhow::anyhow!("vkBeginCommandBuffer failed: {e:?}"))?;
 
-            let clear_values = [vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } }];
+            // uint32, not float32: the union member has to match the
+            // attachment's numeric type, and this attachment is R32_UINT.
+            let clear_values = [vk::ClearValue { color: vk::ClearColorValue { uint32: [0; 4] } }];
             let render_pass_begin = vk::RenderPassBeginInfo::default()
                 .render_pass(self.render_pass)
                 .framebuffer(self.framebuffer)
@@ -383,15 +391,25 @@ impl FurPipeline {
             ctx.device.destroy_fence(fence, None);
             ctx.device.free_command_buffers(self.command_pool, &[cmd]);
 
-            let readback_size = (COLOR_WIDTH as usize) * (COLOR_HEIGHT as usize) * 4;
+            let readback_size = PIXEL_COUNT * 4;
             let ptr = ctx
                 .device
                 .map_memory(self.readback_memory, 0, readback_size as vk::DeviceSize, vk::MemoryMapFlags::empty())
                 .map_err(|e| anyhow::anyhow!("vkMapMemory (readback) failed: {e:?}"))?;
-            let bytes = std::slice::from_raw_parts(ptr as *const u8, readback_size).to_vec();
+            // Copied out bytewise and reassembled rather than cast straight
+            // to *const u32: the mapped pointer carries no alignment
+            // guarantee beyond minMemoryMapAlignment, and an unaligned u32
+            // read would be undefined behaviour. R32_UINT texels sit in
+            // memory in host byte order, so from_ne_bytes is the correct
+            // reassembly.
+            let bytes = std::slice::from_raw_parts(ptr as *const u8, readback_size);
+            let pixels: Vec<u32> = bytes
+                .chunks_exact(4)
+                .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
             ctx.device.unmap_memory(self.readback_memory);
 
-            Ok(bytes)
+            Ok(pixels)
         }
     }
 
@@ -413,54 +431,49 @@ impl FurPipeline {
     }
 }
 
-/// GLSL's `fract(x)` is `x - floor(x)`, always non-negative — unlike Rust's
-/// `f32::fract`, which keeps the sign of `x` (e.g. `(-1.5).fract() ==
-/// -0.5`). The shader is GLSL; the CPU-side reference has to match GLSL's
-/// definition exactly or every negative accumulator would show up as a
-/// false "mismatch" against a real GPU that's computing correctly.
-fn glsl_fract(x: f32) -> f32 {
-    x - x.floor()
-}
-
-const TAU: f32 = std::f32::consts::TAU;
-
-/// GLSL's `mod(x, y)` is `x - y * floor(x / y)`, not Rust's `%` (which keeps
-/// the sign of `x`, like Rust's own `f32::fract`) — same family of
-/// cross-language mismatch as `glsl_fract` above, matched exactly for the
-/// same reason: the shader is GLSL, so the CPU reference has to use GLSL's
-/// definition or it isn't actually checking the same computation.
-fn glsl_mod(x: f32, y: f32) -> f32 {
-    x - y * (x / y).floor()
-}
-
-/// See `wrapAngle` in fur.frag: bounds a trig argument to [0, TAU) before
-/// evaluating sin/cos, since GPU-hardware and CPU-libm sin/cos are only
-/// guaranteed to agree closely for well-conditioned (small) arguments — this
-/// shader's raw arguments reach into the tens of thousands of radians with
-/// 4000 iterations, which is real GPU/CPU divergence, not a hardware defect.
-fn wrap_angle(x: f32) -> f32 {
-    glsl_mod(x, TAU)
-}
-
-/// Recomputes `fur.frag`'s output at pixel (px, py) on the CPU — the same
-/// formula, in the same order, given the same push constants. `gl_FragCoord`
-/// is the pixel center (integer + 0.5) per the Vulkan spec.
-fn expected_pixel(px: u32, py: u32, iterations: u32, time: f32) -> [f32; 3] {
-    let uv_x = (px as f32 + 0.5) * 0.01;
-    let uv_y = (py as f32 + 0.5) * 0.01;
-    let mut acc = [0f32; 3];
-    for i in 0..iterations {
-        let f = i as f32 + time;
-        acc[0] += wrap_angle(uv_x * f).sin() * wrap_angle(uv_y * f).cos();
-        acc[1] += wrap_angle(uv_x * f * 1.3).cos() * wrap_angle(uv_y * f * 0.7).sin();
-        acc[2] += wrap_angle((uv_x + uv_y) * f * 0.5).sin();
+/// Recomputes `fur.frag`'s output for one pixel on the CPU: the same
+/// operations, in the same order, on the same 32-bit unsigned values.
+///
+/// Every operation here is exact and wraps mod 2^32 on both sides, so this
+/// is a bit-for-bit reference rather than an approximation to compare
+/// against with a tolerance. `wrapping_*` is not a workaround; it is the
+/// literal semantics GLSL specifies for uint arithmetic, made explicit
+/// because Rust would otherwise panic on overflow in debug builds.
+fn expected_pixel(px: u32, py: u32, iterations: u32, seed: u32) -> u32 {
+    let mut h = seed ^ px.wrapping_mul(0x9E37_79B9) ^ py.wrapping_mul(0x85EB_CA6B);
+    for _ in 0..iterations {
+        h ^= h << 13;
+        h ^= h >> 17;
+        h ^= h << 5;
+        h = h.wrapping_mul(0x2545_F491).wrapping_add(0x6C07_8965);
     }
-    [glsl_fract(acc[0]), glsl_fract(acc[1]), glsl_fract(acc[2])]
+    h
 }
 
-/// Renders `fur.frag` under load for `duration`, checking a sampled grid of
-/// pixels every frame against the CPU-recomputed expected value. `on_tick`
-/// mirrors stress::run's watchdog contract: return `false` to abort early.
+/// Builds the full expected image for one seed. One pass costs
+/// PIXEL_COUNT * FUR_ITERATIONS iterations, which is why it happens once up
+/// front rather than per frame.
+fn reference_image(seed: u32) -> Vec<u32> {
+    (0..PIXEL_COUNT)
+        .map(|i| {
+            let px = (i % COLOR_WIDTH as usize) as u32;
+            let py = (i / COLOR_WIDTH as usize) as u32;
+            expected_pixel(px, py, FUR_ITERATIONS, seed)
+        })
+        .collect()
+}
+
+/// Renders under load for `duration`, comparing every pixel of every frame
+/// against a precomputed CPU reference. `on_tick` mirrors stress::run's
+/// watchdog contract: return `false` to abort early.
+///
+/// Comparing whole frames rather than a sampled grid is affordable precisely
+/// because the check is now exact: the reference for a given seed never
+/// changes, so it is built once and each frame costs a 64K-element compare
+/// instead of re-deriving per-pixel math. That took coverage from 64 sampled
+/// points per frame to all 65536, which matters for the defect this test is
+/// aimed at — a bad ROP or a bad patch of framebuffer memory is localized,
+/// and a sparse grid can miss it entirely.
 pub fn run(
     ctx: &VulkanContext,
     duration: Duration,
@@ -468,37 +481,64 @@ pub fn run(
 ) -> anyhow::Result<FurTestResult> {
     let pipeline = FurPipeline::new(ctx)?;
 
+    // Announced because it is CPU-bound work with no GPU activity behind it:
+    // roughly half a second on a modern laptop, longer on an old desktop,
+    // during which nothing else prints and the card sits idle.
+    println!("  (computing reference images on the CPU...)");
+    let references: Vec<(u32, Vec<u32>)> = REFERENCE_SEEDS
+        .iter()
+        .map(|&seed| (seed, reference_image(seed)))
+        .collect();
+
     let started = Instant::now();
     let mut frames_rendered = 0u32;
     let mut mismatches = 0u32;
     let mut pixels_checked = 0u32;
     let mut aborted_for_safety = false;
+    let mut reported_example = false;
 
     let result = (|| -> anyhow::Result<()> {
         while started.elapsed() < duration {
-            let elapsed = started.elapsed();
-            let push = PushConstants { iterations: FUR_ITERATIONS, time: elapsed.as_secs_f32() };
-            let pixels = pipeline.render_frame(ctx, &push)?;
+            let (seed, expected) = &references[frames_rendered as usize % references.len()];
+            let push = PushConstants { iterations: FUR_ITERATIONS, seed: *seed };
+            let actual = pipeline.render_frame(ctx, &push)?;
             frames_rendered += 1;
 
-            let step_x = COLOR_WIDTH / SAMPLE_GRID;
-            let step_y = COLOR_HEIGHT / SAMPLE_GRID;
-            for gy in 0..SAMPLE_GRID {
-                for gx in 0..SAMPLE_GRID {
-                    let px = gx * step_x + step_x / 2;
-                    let py = gy * step_y + step_y / 2;
-                    let offset = ((py * COLOR_WIDTH + px) * 4) as usize;
-                    let actual = [
-                        pixels[offset] as f32 / 255.0,
-                        pixels[offset + 1] as f32 / 255.0,
-                        pixels[offset + 2] as f32 / 255.0,
-                    ];
-                    let expected = expected_pixel(px, py, push.iterations, push.time);
-                    pixels_checked += 1;
-                    let is_mismatch = (0..3).any(|c| (actual[c] - expected[c]).abs() > MISMATCH_EPSILON);
-                    if is_mismatch {
-                        mismatches += 1;
-                    }
+            if actual.len() != expected.len() {
+                anyhow::bail!(
+                    "readback returned {} pixels, expected {}",
+                    actual.len(),
+                    expected.len()
+                );
+            }
+
+            // Saturating, because a catastrophically failing card could
+            // otherwise overflow the counter across a 45-second run and
+            // report a small number of mismatches.
+            let frame_mismatches = actual
+                .iter()
+                .zip(expected.iter())
+                .filter(|(a, e)| a != e)
+                .count();
+            pixels_checked = pixels_checked.saturating_add(PIXEL_COUNT as u32);
+            mismatches = mismatches.saturating_add(frame_mismatches as u32);
+
+            // One concrete example is worth far more than a bare count when
+            // diagnosing: the xor of actual against expected shows whether a
+            // single bit flipped (memory or ROP) or the whole value is
+            // unrelated (the computation itself went wrong).
+            if frame_mismatches > 0 && !reported_example {
+                reported_example = true;
+                if let Some(i) = actual.iter().zip(expected.iter()).position(|(a, e)| a != e) {
+                    let (a, e) = (actual[i], expected[i]);
+                    println!(
+                        "\n  render mismatch: frame {frames_rendered}, {frame_mismatches} of \
+                         {PIXEL_COUNT} pixels wrong, first at ({}, {}) actual=0x{a:08x} \
+                         expected=0x{e:08x} xor=0x{:08x}",
+                        i % COLOR_WIDTH as usize,
+                        i / COLOR_WIDTH as usize,
+                        a ^ e
+                    );
                 }
             }
 
@@ -520,4 +560,46 @@ pub fn run(
         pixels_checked,
         aborted_for_safety,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Guards the property the whole test now rests on: the reference is a
+    /// pure function of (pixel, seed), so it is reproducible run to run. If
+    /// this ever stops holding, every certificate the client issues starts
+    /// disagreeing with itself.
+    #[test]
+    fn reference_is_deterministic() {
+        assert_eq!(expected_pixel(17, 42, 64, 0x1234_5678), expected_pixel(17, 42, 64, 0x1234_5678));
+    }
+
+    /// Different pixels must not collapse onto the same value, or a defect
+    /// that corrupted one pixel into another's value would read as a pass.
+    #[test]
+    fn distinct_pixels_differ() {
+        let a = expected_pixel(0, 0, FUR_ITERATIONS, REFERENCE_SEEDS[0]);
+        let b = expected_pixel(1, 0, FUR_ITERATIONS, REFERENCE_SEEDS[0]);
+        let c = expected_pixel(0, 1, FUR_ITERATIONS, REFERENCE_SEEDS[0]);
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(b, c);
+    }
+
+    /// Zero is an absorbing state for bare xorshift32. The LCG step exists
+    /// to break out of it, and this pins that down: if the mixer were ever
+    /// simplified back to plain xorshift, a pixel that reached zero would
+    /// stay zero and read identically to cleared framebuffer memory.
+    #[test]
+    fn zero_state_recovers() {
+        let mut h = 0u32;
+        for _ in 0..4 {
+            h ^= h << 13;
+            h ^= h >> 17;
+            h ^= h << 5;
+            h = h.wrapping_mul(0x2545_F491).wrapping_add(0x6C07_8965);
+        }
+        assert_ne!(h, 0);
+    }
 }

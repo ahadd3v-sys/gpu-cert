@@ -20,14 +20,20 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// "Verify" sits in front of the account links on every page, including for
+// signed-out visitors, because the person most likely to need it is a buyer
+// who was handed a certificate link by a stranger — someone with no account
+// and no reason to make one.
 function loggedInNav(): string {
-  return `<a href="/dashboard">My certificates</a>
+  return `<a href="/verify">Verify</a>
+    <a href="/dashboard">My certificates</a>
     <form method="post" action="/logout"><button type="submit" class="btn btn-quiet">Log out</button></form>`;
 }
 
 function loggedOutNav(next?: string): string {
   const q = next ? `?next=${encodeURIComponent(next)}` : "";
-  return `<a href="/login${q}">Log in</a>
+  return `<a href="/verify">Verify</a>
+    <a href="/login${q}">Log in</a>
     <a class="btn btn-quiet" href="/signup${q}">Create account</a>`;
 }
 
@@ -358,5 +364,104 @@ export function renderDashboard(reports: ReportRow[], email: string, uploadKey: 
       </div>
       <p class="field-hint" style="margin-top: 14px;">Ran the tool without the key? Open that certificate and add it to this account from the page itself. It stays public either way.</p>
     </section>`,
+  });
+}
+
+// -------------------------------------------------------------- verify
+
+// The page that makes the certificate's central claim checkable. Everything
+// else on this site is GPU Cert telling you something; this is the one place
+// a stranger can confirm it without taking our word for it, so it states
+// plainly what was checked and what that does and does not prove.
+const VERIFY_CSS = `
+  .verify-head { margin-bottom: 22px; }
+  .verify-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .verify-form .field { flex: 1 1 260px; margin-bottom: 0; }
+  .verify-form .btn { flex-shrink: 0; }
+
+  .result {
+    border-left: 3px solid var(--pass);
+    background: rgba(63, 108, 79, 0.07);
+    padding: 16px 18px;
+    margin: 26px 0 0;
+  }
+  .result.invalid { border-left-color: var(--fail); background: rgba(150, 67, 47, 0.07); }
+  .result-verdict { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 18px; margin: 0 0 6px; color: var(--pass); }
+  .result.invalid .result-verdict { color: var(--fail); }
+  .result-detail { font-size: 13.5px; color: var(--ink-muted); margin: 0; line-height: 1.6; }
+
+  dl.verify-facts { display: grid; grid-template-columns: 1fr auto; row-gap: 0; margin: 22px 0 0; }
+  .verify-facts > div { display: contents; }
+  .verify-facts dt, .verify-facts dd { padding: 9px 0; border-top: 1px solid var(--paper-deep); margin: 0; font-size: 13.5px; }
+  .verify-facts dt { color: var(--ink-muted); }
+  .verify-facts dd { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; word-break: break-all; padding-left: 20px; }
+
+  .verify-how { font-size: 12.5px; color: var(--ink-muted); line-height: 1.65; margin: 22px 0 0; padding-top: 16px; border-top: 1px solid var(--paper-deep); }
+  .verify-how code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+`;
+
+export interface VerifyResult {
+  reference: string;
+  signatureValid: boolean;
+  reportId: string;
+  certificateNumber: string;
+  deviceName: string;
+  fingerprintHash: string;
+  verdict: string;
+  issuedAt: string;
+}
+
+export function renderVerify(opts: {
+  loggedIn: boolean;
+  reference?: string;
+  error?: string;
+  result?: VerifyResult;
+}): string {
+  const r = opts.result;
+
+  const resultBlock = r
+    ? `<div class="result${r.signatureValid ? "" : " invalid"}">
+         <p class="result-verdict">${r.signatureValid ? "Signature valid" : "Signature does not match"}</p>
+         <p class="result-detail">${
+           r.signatureValid
+             ? `This certificate was issued by GPU Cert and has not been altered since. It records a verdict of <strong>${esc(r.verdict)}</strong> for the card identified below.`
+             : "The stored signature does not match this certificate's contents. Do not rely on it."
+         }</p>
+       </div>
+       <dl class="verify-facts">
+         <div><dt>Certificate No.</dt><dd>${esc(r.certificateNumber)}</dd></div>
+         <div><dt>Device</dt><dd>${esc(r.deviceName)}</dd></div>
+         <div><dt>Verdict</dt><dd>${esc(r.verdict)}</dd></div>
+         <div><dt>Issued</dt><dd>${esc(formatDate(r.issuedAt))}</dd></div>
+         <div><dt>Hardware fingerprint</dt><dd>${esc(r.fingerprintHash)}</dd></div>
+       </dl>
+       <p class="verify-how"><a href="/r/${esc(r.reportId)}">View the full certificate</a></p>`
+    : "";
+
+  return sitePage({
+    title: "Verify a certificate",
+    nav: opts.loggedIn ? loggedInNav() : loggedOutNav("/verify"),
+    width: 620,
+    css: VERIFY_CSS,
+    body: `
+    <div class="verify-head">
+      <p class="eyebrow">Verification</p>
+      <h1 class="display" style="font-size: 30px;">Check a certificate yourself.</h1>
+      <p class="statement" style="margin-bottom: 0;">Every certificate is signed with GPU Cert's Ed25519 key when it is issued. Enter its number to re-check that signature against what is stored. If a single character of the result was changed after issue, the signature stops matching.</p>
+    </div>
+    ${opts.error ? `<p class="notice-fail">${esc(opts.error)}</p>` : ""}
+    <form method="get" action="/verify" class="verify-form">
+      <div class="field">
+        <label for="reference">Certificate number or report ID</label>
+        <input id="reference" name="reference" value="${esc(opts.reference ?? "")}" placeholder="GPUC-1A2B3C4D" autocomplete="off" required>
+      </div>
+      <button type="submit" class="btn">Verify</button>
+    </form>
+    ${resultBlock}
+    <p class="verify-how">
+      A valid signature proves the certificate came from GPU Cert and has not been edited. It does not prove the person showing it to you owns that card, so check that the hardware fingerprint matches the card you are actually being sold.
+      <br><br>
+      To check it without trusting this page, the public key is published at <code><a href="/.well-known/gpu-cert-key.pem">/.well-known/gpu-cert-key.pem</a></code>.
+    </p>`,
   });
 }

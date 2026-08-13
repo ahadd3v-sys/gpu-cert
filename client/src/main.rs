@@ -129,6 +129,20 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Files a report from a previous run whose submission couldn't get
+    // through. The results are already on disk, so this takes seconds
+    // rather than re-running ~16 minutes of load against the card.
+    if std::env::args().any(|a| a == "--resubmit") {
+        match report::resubmit(account::load().as_deref())? {
+            Some(response) => {
+                println!("Filed. Report: {}", response.report_url);
+                open_browser(&response.report_url);
+            }
+            None => println!("Nothing to resubmit."),
+        }
+        return Ok(());
+    }
+
     let fast = std::env::args().any(|a| a == "--fast");
     let (stress_duration, vram_duration, fur_duration) = if fast {
         println!("(--fast: running short debug-length tests, not a real certificate)");
@@ -240,7 +254,7 @@ fn run() -> anyhow::Result<()> {
     println!();
     let fur_report = FurTestReport::from_result(&fur_result);
     println!(
-        "Render integrity test complete: {} frames, {}/{} sample pixels mismatched",
+        "Render integrity test complete: {} frames, {} of {} pixels mismatched",
         fur_report.frames_rendered, fur_report.mismatches, fur_report.pixels_checked
     );
 

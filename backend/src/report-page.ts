@@ -87,9 +87,25 @@ function renderSeal(verdict: "Pass" | "Fail"): string {
 
 export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): string {
   const passed = report.verdict === "Pass";
-  const vramPct = Math.round((report.vram_bytes_tested / report.fingerprint_vram_total_bytes) * 100);
+  // Guarded: a card whose telemetry reported no VRAM total would otherwise
+  // divide by zero and print "NaN%" on the certificate.
+  const vramPct =
+    report.fingerprint_vram_total_bytes > 0
+      ? Math.round((report.vram_bytes_tested / report.fingerprint_vram_total_bytes) * 100)
+      : 0;
   const sigTruncated = `${report.signature.slice(0, 20)}…${report.signature.slice(-16)}`;
-  const reasons: string[] = passed ? [] : JSON.parse(report.verdict_reasons);
+  // Tolerated rather than trusted: a malformed value in this column would
+  // otherwise throw and take down the whole certificate page, turning a
+  // cosmetic data problem into an unreachable document.
+  let reasons: string[] = [];
+  if (!passed) {
+    try {
+      const parsed = JSON.parse(report.verdict_reasons);
+      if (Array.isArray(parsed)) reasons = parsed.filter((r): r is string => typeof r === "string");
+    } catch {
+      reasons = [];
+    }
+  }
 
   const reasonsSection =
     reasons.length > 0
@@ -326,7 +342,7 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
           <dl class="protocol-results">
             <div><dt>Duration</dt><dd>${formatDuration(report.fur_duration_ms)}</dd></div>
             <div><dt>Frames rendered</dt><dd>${formatCount(report.fur_frames_rendered)}</dd></div>
-            <div><dt>Sample pixels checked</dt><dd>${formatCount(report.fur_pixels_checked)}</dd></div>
+            <div><dt>Pixels checked</dt><dd>${formatCount(report.fur_pixels_checked)}</dd></div>
             <div><dt>Mismatches</dt><dd>${formatCount(report.fur_mismatches)}</dd></div>
           </dl>
         </div>
@@ -339,7 +355,7 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
       <div>
         <p class="section-label">Cryptographic Signature</p>
         <p class="sig">${esc(sigTruncated)}</p>
-        <p class="footer-note">Ed25519 — verifiable against GPU Cert's published signing key</p>
+        <p class="footer-note">Ed25519 — <a href="/verify/${esc(certificateNumber(report.id))}">check this signature</a></p>
       </div>
       <div class="verify-block">
         <p class="footer-note">Verified ${formatTimestamp(report.created_at)}</p>

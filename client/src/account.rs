@@ -25,7 +25,7 @@ const KEY_LEN: usize = 5 + 16 + 3;
 /// `%APPDATA%\gpu-cert\upload-key` on Windows, `~/.config/gpu-cert/upload-key`
 /// elsewhere (dev boxes). Returns `None` if neither variable is set, in which
 /// case the key just isn't persisted and the run behaves like an anonymous one.
-fn key_path() -> Option<PathBuf> {
+pub fn config_dir() -> Option<PathBuf> {
     let dir = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else {
@@ -33,7 +33,11 @@ fn key_path() -> Option<PathBuf> {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
     }?;
-    Some(dir.join("gpu-cert").join("upload-key"))
+    Some(dir.join("gpu-cert"))
+}
+
+fn key_path() -> Option<PathBuf> {
+    Some(config_dir()?.join("upload-key"))
 }
 
 /// Accepts the key in whatever shape it gets pasted: extra spaces, lowercase,
@@ -46,10 +50,16 @@ pub fn normalize(input: &str) -> Option<String> {
         .map(|c| c.to_ascii_uppercase())
         .collect();
 
-    let body = compact.strip_prefix("GPUC").unwrap_or(&compact);
-    if body.len() != 16 {
-        return None;
-    }
+    // Only strips the prefix when what remains is a whole key. Stripping
+    // unconditionally would reject a legitimate key pasted without its
+    // prefix whose first group happens to be "GPUC" — the key alphabet
+    // contains G, P, U and C, so that is a real (if rare) key, and it would
+    // have been rejected as malformed with no way for the user to tell why.
+    let body = match compact.len() {
+        20 if compact.starts_with("GPUC") => &compact[4..],
+        16 => compact.as_str(),
+        _ => return None,
+    };
 
     let groups: Vec<String> = body
         .as_bytes()
@@ -165,5 +175,20 @@ mod tests {
         assert_eq!(normalize(""), None);
         assert_eq!(normalize("GPUC-9XJ2"), None);
         assert_eq!(normalize("GPUC-9XJ2-X8PU-6L99-3N2J-EXTRA"), None);
+    }
+
+    /// The key alphabet contains G, P, U and C, so a real key's first group
+    /// can be "GPUC". Pasted without its prefix, that must still normalize
+    /// rather than look like a prefix to strip.
+    #[test]
+    fn accepts_a_key_whose_first_group_is_gpuc() {
+        assert_eq!(
+            normalize("GPUC-X8PU-6L99-3N2J").as_deref(),
+            Some("GPUC-GPUC-X8PU-6L99-3N2J")
+        );
+        assert_eq!(
+            normalize("GPUC-GPUC-X8PU-6L99-3N2J").as_deref(),
+            Some("GPUC-GPUC-X8PU-6L99-3N2J")
+        );
     }
 }

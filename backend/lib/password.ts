@@ -18,3 +18,14 @@ export function verifyPassword(password: string, stored: string): boolean {
   const expected = Buffer.from(hash, "hex");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
+
+// Burns the same scrypt work a real verification would, for the login path
+// where no account matched. Without it, "no such email" returns in
+// microseconds while a wrong password takes as long as scrypt does, and that
+// difference is measurable over the network — it lets anyone enumerate which
+// email addresses have accounts here.
+const DUMMY_HASH = hashPassword("gpu-cert-timing-equalizer");
+
+export function burnPasswordVerification(password: string): void {
+  verifyPassword(password, DUMMY_HASH);
+}

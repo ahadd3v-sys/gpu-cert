@@ -188,6 +188,24 @@ impl ComputeKernel {
                 .map_err(|e| anyhow::anyhow!("vkAllocateDescriptorSets failed: {e:?}"))?;
             let descriptor_set = descriptor_sets[0];
 
+            // Checked rather than assumed. Exceeding maxStorageBufferRange is
+            // VUID-VkWriteDescriptorSet-descriptorType-00333, and the failure
+            // mode is silent: the range truncates (it is a uint32_t) and the
+            // shader simply cannot reach past it, so reads come back as zero
+            // and a memory test scores them as bit errors. That cost two
+            // wasted hardware runs, so it fails loudly here instead of
+            // relying on every call site to have sized its buffers correctly.
+            for b in buffers {
+                if b.size > ctx.max_storage_buffer_range as vk::DeviceSize {
+                    anyhow::bail!(
+                        "internal error: tried to bind a {}-byte storage buffer, but this device's \
+                         maxStorageBufferRange is {}. Split the allocation into smaller buffers.",
+                        b.size,
+                        ctx.max_storage_buffer_range
+                    );
+                }
+            }
+
             let buffer_infos: Vec<vk::DescriptorBufferInfo> = buffers
                 .iter()
                 .map(|b| {
@@ -225,6 +243,33 @@ impl ComputeKernel {
             ctx.device
                 .begin_command_buffer(cmd, &begin_info)
                 .map_err(|e| anyhow::anyhow!("vkBeginCommandBuffer failed: {e:?}"))?;
+
+            // Makes every shader write from previously submitted dispatches
+            // available and visible to this one. Waiting on the previous
+            // dispatch's fence only guarantees execution finished, not that
+            // its writes left the caches — Vulkan requires an explicit memory
+            // dependency for that, and a barrier's first synchronization
+            // scope covers all commands earlier in submission order, which
+            // includes prior submits on this queue.
+            //
+            // The VRAM test depends on this directly: it fills VRAM in one
+            // dispatch and verifies in another, and a verify that reads back
+            // stale cached data would report a clean pass on a card whose
+            // memory never actually held the pattern. A false pass is the
+            // one failure this whole test exists to rule out.
+            let memory_barrier = vk::MemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
+            ctx.device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[memory_barrier],
+                &[],
+                &[],
+            );
+
             ctx.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
             ctx.device.cmd_bind_descriptor_sets(

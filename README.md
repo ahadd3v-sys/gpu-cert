@@ -73,8 +73,36 @@ signup a prerequisite to testing a card.
   (signup/login, JWT session cookie), ingests reports from the exe (bearer
   upload key optional, no browser session), lets a logged-in viewer claim an
   unowned report, serves the public `/r/:reportId` certificate and shareable
-  badge image, and a `/dashboard` that is both the register of a user's
-  certificates and where their upload key lives.
+  badge image, a `/verify` surface (see below), and a `/dashboard` that is
+  both the register of a user's certificates and where their upload key
+  lives.
+
+## Verification
+
+The differentiator is that a buyer can check a certificate without trusting
+the seller, so that has to be a real, reachable thing rather than a claim in
+the footer:
+
+- `/verify` takes a certificate number (`GPUC-1A2B3C4D`, the short form
+  printed prominently on the certificate) or a full report ID, and
+  `/verify/:reference` does the same as a linkable path.
+- The check rebuilds the signed payload **from the stored row** and
+  re-verifies the Ed25519 signature against it. It never reads a stored
+  "valid" flag, so altering any covered field in the database makes the
+  signature stop matching.
+- `/.well-known/gpu-cert-key.pem` publishes the public key, so the signature
+  can be checked with any Ed25519 tool instead of only by this server.
+
+Ingest and verification build that payload through two different functions
+from two different shapes, and they must agree byte for byte forever or every
+certificate ever issued silently becomes unverifiable. `npm test` asserts
+they do, plus that eight distinct kinds of tampering (flipped verdict, zeroed
+VRAM errors, swapped fingerprint, moved issue date, and so on) are each
+detected.
+
+The page is also explicit about what a valid signature does *not* prove: that
+the person showing it owns the card. That is what the hardware fingerprint on
+the certificate is for.
 - `backend/src/theme.ts` — the shared visual language: palette tokens, the
   embedded Fraunces face, the letterhead masthead, and the page shell. Both
   `report-page.ts` and `pages.ts` import from here, so the palette is defined
@@ -92,13 +120,38 @@ Three tests, each documented and scored — see `backend/lib/certify.ts`
 - **VRAM pattern test** (`client/src/vulkan/vram_test.rs`) — bit-pattern
   write/verify sweep across active VRAM (memtest_vulkan-derived). Any error
   is a fail, full stop — this is the core "mining damage" detector.
+
+  The tested region is split into several buffers, each sized at runtime to
+  `min(maxStorageBufferRange, maxMemoryAllocationSize, heap size, 1 GiB)`.
+  This is not an optimization. `maxStorageBufferRange` is a `uint32_t`, so no
+  device will ever bind more than 4 GiB-1 to one descriptor, and exceeding it
+  doesn't fail loudly: the range truncates and the shader silently cannot
+  address past it. Allocating 85% of an 8 GiB card as one buffer therefore
+  left only `7,287,183,768 mod 2^32` = 2.99 GB reachable, and every element
+  beyond that read back as zero and was counted as a memory error. Every
+  segment is filled before any segment is verified, so a verify can never be
+  served out of cache from the fill that just happened, and each dispatch is
+  chunked short enough not to trip Windows' TDR watchdog.
 - **Render integrity test** (`client/src/vulkan/fur_test.rs`) — renders a
-  deterministic fullscreen fragment shader and checks a sampled pixel grid
-  against the CPU-recomputed expected output every frame. Catches
+  deterministic fullscreen fragment shader and compares **every pixel of
+  every frame**, bit for bit, against a CPU-computed reference. Catches
   compute/rasterizer defects the other two tests can't see (neither of them
-  reads back or checks its own output). **Never run against real hardware
-  yet** — this dev environment can compile the Vulkan graphics-pipeline code
-  but not execute it.
+  reads back or checks its own output).
+
+  The shader is integer-only, and that is load-bearing rather than a style
+  choice. It originally accumulated 4000 float `sin`/`cos` terms and emitted
+  `fract(acc)`, compared against a CPU recomputation within an epsilon. That
+  cannot work: GPU compilers may contract `a*b + c` into a single FMA, Vulkan
+  permits several ULP of error on transcendentals, and `fract` of a large
+  accumulator is a discontinuity, so a near-integer accumulator flips the
+  output by ~1.0 on a vanishingly small input difference. No epsilon below
+  1.0 absorbs that and 1.0 accepts everything. On a healthy RX 6600 it
+  produced a 2.7% false-mismatch rate. `xor`/shift/multiply/add on `uint`
+  are exact and wrap mod 2^32 on every conformant implementation, so the
+  comparison is now exact with no tolerance to tune, and it means the same
+  thing on every GPU instead of being calibrated to one. The attachment is
+  `VK_FORMAT_R32_UINT`, which carries mandatory `COLOR_ATTACHMENT_BIT`
+  support in the spec, so this is portable rather than hardware-specific.
 - **PCIe link width** (via NVML) — current vs. max-supported lane width; a
   degraded link (bad slot/connector/riser) fails with a specific reason.
 
@@ -154,11 +207,12 @@ actually be verified here vs. what's still gated on real hardware:
   PE32+ Windows console exe, 3.8 MB release / stripped. This is the target
   to ship from. Still unverified: whether it actually *runs* correctly —
   no real Windows machine or GPU here to test against.
-- **The client's unit tests can't be executed here.** There's no native `cc`
-  on this box (only `x86_64-w64-mingw32-gcc`), so `cargo test` fails to link
-  its test binary even though `cargo check` and the Windows cross-build both
-  pass. `account::normalize`'s tests are therefore written but unrun — worth
-  running first on the Windows machine.
+- **Resolved: the client's unit tests run.** A native `cc` is present now, so
+  `cargo test` links and passes (7 tests). The backend has its own checks:
+  `npm run check` (typecheck + signing round-trip and tamper detection) and
+  `npm run smoke` (boots the server against a throwaway DB and exercises
+  ingest, the certificate page, verification, the badge and the redirect
+  guard end to end, 19 assertions).
 - **NVML/ADL/Vulkan can't be exercised at all here** — no real driver, GPU,
   or Windows Vulkan ICD in this dev environment. `cargo check`/`cargo build`
   (native Linux target) and the shader→SPIR-V build step both pass, and the
@@ -205,7 +259,31 @@ actually be verified here vs. what's still gated on real hardware:
   a real, working backend — the exe has somewhere to actually submit to
   once it's built and run.
 
-Final testing is gated on a real Windows machine with an Nvidia or AMD
-card — the exe is built, released, and downloadable now, but every
-hardware-facing code path (NVML, ADL, Vulkan) is still unverified against
-real hardware.
+## Real-hardware findings
+
+First real runs happened on an RX 6600 (Windows) on 2026-08-13, and they
+found real bugs rather than confirming the code worked. Worth reading before
+changing any of the Vulkan paths, because two of these fail *silently* and
+cost several wasted hardware runs each:
+
+- **A descriptor pool without `FREE_DESCRIPTOR_SET` exhausts after one
+  dispatch.** Freeing is a spec-defined no-op without that flag, so
+  `max_sets(1)` permanently ran out on the second call.
+- **Exceeding `maxStorageBufferRange` does not error.** It truncates. See the
+  VRAM test note above. Diagnosed from the stored error count: 332 passes
+  reporting 1,073,741,823.93 errors each is 2^30, which is exactly the
+  element count that becomes unreachable when a 6.79 GiB range wraps at
+  2^32. Corroborated by the timing, which implied 226 GB/s on a card whose
+  theoretical peak is 224 GB/s.
+- **A driver's reported limits can be useless.** This one reports
+  `maxComputeWorkGroupCount[0] = 4294967295`. Chunking against a limit that
+  large is the same as not chunking, which is why an earlier fix that looked
+  right changed nothing at all.
+- **Reproducing GPU float math on the CPU is not achievable.** See the render
+  integrity note above.
+
+Still unverified against real hardware: the NVIDIA path (NVML) has no real
+run yet, only AMD (ADL); AMD's degraded-PCIe-link check is deliberately
+inert because ADL exposes no verified max-lane-count call; and the
+100°C watchdog and the stress-telemetry thresholds in `stress-analysis.ts`
+remain conservative estimates rather than calibrated numbers.

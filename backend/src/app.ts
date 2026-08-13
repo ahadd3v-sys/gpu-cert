@@ -1,9 +1,10 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { setCookie, deleteCookie } from "hono/cookie";
 import {
   db,
   ensureSchema,
   getReportById,
+  findReportByReference,
   getReportsForUser,
   claimReport,
   createUser,
@@ -14,13 +15,18 @@ import {
   generateUploadKey,
   setUploadKey,
 } from "../lib/db.js";
-import { CertifyRequestSchema, computeVerdict, canonicalReportString } from "../lib/certify.js";
-import { signReport } from "../lib/signing.js";
-import { hashPassword, verifyPassword } from "../lib/password.js";
+import {
+  CertifyRequestSchema,
+  computeVerdict,
+  canonicalReportString,
+  canonicalReportStringFromRow,
+} from "../lib/certify.js";
+import { signReport, verifyReportSignature } from "../lib/signing.js";
+import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/password.js";
 import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
 import { renderReportPage } from "./report-page.js";
 import { renderBadge } from "./badge.js";
-import { renderHome, renderLogin, renderSignup, renderDashboard } from "./pages.js";
+import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify } from "./pages.js";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpu-cert.vercel.app";
 const SESSION_COOKIE_OPTS = {
@@ -32,6 +38,23 @@ const SESSION_COOKIE_OPTS = {
 };
 
 export const app = new Hono();
+
+// `next` comes straight off the query string and is fed to a redirect after
+// login, so it has to be constrained to this site. Left open, a link like
+// /login?next=https://evil.example would send someone who just typed their
+// password into gpu-cert.vercel.app onward to an attacker's page, which is a
+// credible phishing setup precisely because the login itself was genuine.
+//
+// A single leading slash is required and a second one rejected: "//evil.example"
+// is a protocol-relative URL, not a local path, and browsers follow it
+// off-site. Backslashes are rejected for the same reason, since some browsers
+// normalize them to forward slashes.
+function safeNext(next: unknown): string | null {
+  if (typeof next !== "string" || next.length === 0) return null;
+  if (!next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+  if (next.includes("\\")) return null;
+  return next;
+}
 
 // The exe submits here directly. It has no browser session, so ownership
 // works one of two ways:
@@ -147,13 +170,82 @@ app.post("/r/:reportId/claim", async (c) => {
   return c.redirect(`/r/${c.req.param("reportId")}`);
 });
 
+// The certificate's whole value to a buyer is that they don't have to take
+// the seller's word for it, which requires somewhere to actually check. Both
+// the query form (/verify?reference=) and the path form (/verify/GPUC-1A2B3C4D)
+// land here, so a certificate number can be linked directly as well as typed.
+async function handleVerify(c: Context, reference: string | null) {
+  const loggedIn = (await getSessionUserId(c)) !== null;
+  if (!reference) {
+    return c.html(renderVerify({ loggedIn }));
+  }
+
+  const report = await findReportByReference(reference);
+  if (!report) {
+    return c.html(
+      renderVerify({
+        loggedIn,
+        reference,
+        error: "No certificate found with that number. Check it against the certificate itself.",
+      }),
+      404
+    );
+  }
+
+  // Recomputed from what is stored rather than read from any field, which is
+  // the point: if a stored value were tampered with, the string rebuilt here
+  // differs from the one signed at issue and the check fails.
+  let signatureValid = false;
+  try {
+    signatureValid = verifyReportSignature(canonicalReportStringFromRow(report), report.signature);
+  } catch {
+    // A malformed signature or an unreadable key is not a valid signature.
+    // Reporting it as anything other than "does not match" would be worse
+    // than useless on the one page whose job is to be trustworthy.
+    signatureValid = false;
+  }
+
+  return c.html(
+    renderVerify({
+      loggedIn,
+      reference,
+      result: {
+        reference,
+        signatureValid,
+        reportId: report.id,
+        certificateNumber: `GPUC-${report.id.slice(0, 8).toUpperCase()}`,
+        deviceName: report.device_name,
+        fingerprintHash: report.fingerprint_hash,
+        verdict: report.verdict,
+        issuedAt: report.created_at,
+      },
+    })
+  );
+}
+
+app.get("/verify", (c) => handleVerify(c, c.req.query("reference")?.trim() || null));
+app.get("/verify/:reference", (c) => handleVerify(c, c.req.param("reference")));
+
+// Published so the signature can be checked with any Ed25519 tool instead of
+// only by this server, which is what makes "independently verifiable" mean
+// something. Served as text/plain so a browser shows it rather than
+// downloading it.
+app.get("/.well-known/gpu-cert-key.pem", (c) => {
+  const pem = process.env.CERT_SIGNING_PUBLIC_KEY;
+  if (!pem) return c.text("signing key not configured", 500);
+  return c.text(`${pem.replace(/\\n/g, "\n").trim()}\n`, 200, {
+    "content-type": "application/x-pem-file; charset=utf-8",
+    "cache-control": "public, max-age=3600",
+  });
+});
+
 app.get("/", async (c) => {
   const userId = await getSessionUserId(c);
   return c.html(renderHome(userId !== null));
 });
 
 app.get("/login", (c) => {
-  const next = c.req.query("next") ?? null;
+  const next = safeNext(c.req.query("next"));
   return c.html(renderLogin(next, null));
 });
 
@@ -161,10 +253,14 @@ app.post("/login", async (c) => {
   const form = await c.req.parseBody();
   const email = String(form.email ?? "").trim().toLowerCase();
   const password = String(form.password ?? "");
-  const next = typeof form.next === "string" ? form.next : null;
+  const next = safeNext(form.next);
 
   const user = await getUserByEmail(email);
-  if (!user || !verifyPassword(password, user.password_hash)) {
+  if (!user) {
+    burnPasswordVerification(password);
+    return c.html(renderLogin(next, "Wrong email or password"), 401);
+  }
+  if (!verifyPassword(password, user.password_hash)) {
     return c.html(renderLogin(next, "Wrong email or password"), 401);
   }
 
@@ -174,7 +270,7 @@ app.post("/login", async (c) => {
 });
 
 app.get("/signup", (c) => {
-  const next = c.req.query("next") ?? null;
+  const next = safeNext(c.req.query("next"));
   return c.html(renderSignup(next, null));
 });
 
@@ -182,8 +278,15 @@ app.post("/signup", async (c) => {
   const form = await c.req.parseBody();
   const email = String(form.email ?? "").trim().toLowerCase();
   const password = String(form.password ?? "");
-  const next = typeof form.next === "string" ? form.next : null;
+  const next = safeNext(form.next);
 
+  // The form carries type="email" and required, but a POST doesn't have to
+  // come from the form — without this, an empty string is a valid email as
+  // far as the database is concerned, and it takes the UNIQUE slot for every
+  // subsequent malformed signup.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return c.html(renderSignup(next, "Enter a valid email address"), 400);
+  }
   if (password.length < 8) {
     return c.html(renderSignup(next, "Password must be at least 8 characters"), 400);
   }
@@ -191,7 +294,16 @@ app.post("/signup", async (c) => {
     return c.html(renderSignup(next, "An account with that email already exists"), 409);
   }
 
-  const user = await createUser(email, hashPassword(password));
+  // The check above is a courtesy, not the guarantee — two simultaneous
+  // signups for the same address both pass it. The UNIQUE index is what
+  // actually enforces it, so its rejection is handled as the same user-facing
+  // outcome rather than surfacing as a 500.
+  let user;
+  try {
+    user = await createUser(email, hashPassword(password));
+  } catch {
+    return c.html(renderSignup(next, "An account with that email already exists"), 409);
+  }
   const token = await createSessionToken(user.id);
   setCookie(c, COOKIE_NAME, token, SESSION_COOKIE_OPTS);
   return c.redirect(next || "/dashboard");

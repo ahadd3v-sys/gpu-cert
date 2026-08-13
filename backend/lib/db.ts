@@ -150,6 +150,37 @@ export async function getReportById(id: string): Promise<ReportRow | null> {
   return row as unknown as ReportRow;
 }
 
+// Accepts whatever a person actually has in front of them. The certificate
+// page shows a short "Certificate No." (GPUC- plus the first 8 characters of
+// the id, uppercased) far more prominently than the full report id, so that
+// short form is what someone checking a stranger's certificate will type,
+// while a pasted URL yields the full id. Both resolve here.
+//
+// The prefix branch only ever runs on input already matched against
+// /^[0-9a-f]{8}$/, so nothing user-controlled reaches the LIKE pattern.
+export async function findReportByReference(reference: string): Promise<ReportRow | null> {
+  await ensureSchema();
+
+  const compact = reference.trim().replace(/[^0-9a-zA-Z-]/g, "");
+  const full = compact.toLowerCase();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(full)) {
+    return getReportById(full);
+  }
+
+  const short = compact.replace(/^GPUC-?/i, "").toLowerCase();
+  if (!/^[0-9a-f]{8}$/.test(short)) return null;
+
+  const res = await db().execute({
+    sql: `SELECT ${REPORT_COLUMNS} FROM reports WHERE id LIKE ? LIMIT 2`,
+    args: [`${short}%`],
+  });
+  // A truncated reference could in principle match more than one report.
+  // Refusing to answer is the only correct response: picking one would tell
+  // someone their certificate is valid while showing them a different card's.
+  if (res.rows.length !== 1) return null;
+  return res.rows[0] as unknown as ReportRow;
+}
+
 export async function getReportsForUser(userId: string): Promise<ReportRow[]> {
   await ensureSchema();
   const res = await db().execute({

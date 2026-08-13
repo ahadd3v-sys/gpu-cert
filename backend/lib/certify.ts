@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { assessStressTest } from "./stress-analysis.js";
+import type { ReportRow } from "./db.js";
 
 // Field names match the Rust client's `serde`-serialized struct names
 // exactly (client/src/report.rs) — snake_case, no renaming on either side.
@@ -77,11 +78,18 @@ export interface VerdictResult {
   stressClockStabilityPct: number;
 }
 
-// Real corruption produces many wrong pixels, not one borderline sample near
-// a legitimate floating-point/quantization edge (see fur_test.rs's own
-// epsilon for the per-pixel tolerance) — 1% gives room for that noise while
-// still catching anything systematic.
-const FUR_MISMATCH_FAIL_FRACTION = 0.01;
+// Zero tolerance, exactly like the VRAM test, and for the same reason: a
+// mismatch is now unambiguous.
+//
+// This used to allow 1%, which was the right call when the render test
+// compared floating-point output against a CPU-recomputed reference — GPU and
+// CPU float results legitimately differ, so some noise floor was unavoidable
+// and any threshold was really a guess about how much. That test has been
+// replaced by an exact integer comparison (see client/src/vulkan/fur_test.rs),
+// where the GPU and the CPU must produce identical bits on every conformant
+// implementation. There is no noise left to absorb, so a tolerance would only
+// be hiding real defects.
+const FUR_MISMATCH_FAIL_FRACTION = 0;
 
 // Any VRAM pattern-test error is a fail, full stop, since that directly
 // indicates damaged/degraded memory cells (the whole reason this test
@@ -126,7 +134,7 @@ export function computeVerdict(req: CertifyRequest): VerdictResult {
     const mismatchFraction = req.fur_test.mismatches / req.fur_test.pixels_checked;
     if (mismatchFraction > FUR_MISMATCH_FAIL_FRACTION) {
       reasons.push(
-        `Render integrity test found ${req.fur_test.mismatches} of ${req.fur_test.pixels_checked} sample pixels computed incorrectly under load — indicates a GPU compute or rendering defect.`
+        `Render integrity test found ${req.fur_test.mismatches.toLocaleString("en-US")} of ${req.fur_test.pixels_checked.toLocaleString("en-US")} pixels computed incorrectly under load — indicates a GPU compute or rendering defect.`
       );
     }
   }
@@ -140,12 +148,65 @@ export function computeVerdict(req: CertifyRequest): VerdictResult {
   };
 }
 
+// Every field the signature commits to. Written out as an explicit shape,
+// with exactly one place that serializes it, because signing and verifying
+// have to agree byte for byte forever: a certificate signed today must still
+// verify years from now, and the two code paths that build this string are in
+// different files and run at different times (ingest vs. someone checking a
+// stranger's certificate). If they were assembled independently, any
+// divergence would silently turn every existing certificate invalid.
+export interface CanonicalReport {
+  id: string;
+  client_version: string;
+  device_name: string;
+  fingerprint_hash: string;
+  verdict: string;
+  vram_total_errors: number;
+  vram_bytes_tested: number;
+  stress_peak_temp_c: number;
+  stress_thermally_stable: boolean;
+  stress_aborted_for_safety: boolean;
+  vram_aborted_for_safety: boolean;
+  pcie_link_width_current: number;
+  pcie_link_width_max: number;
+  fur_mismatches: number;
+  fur_pixels_checked: number;
+  fur_aborted_for_safety: boolean;
+  created_at: string;
+}
+
 // Deterministic, fixed-key-order string for the signature to cover —
 // intentionally not JSON.stringify(req) directly, since object key order
 // in JSON isn't guaranteed stable across serializers/re-parses, and the
 // signature must verify the same way every time this payload is checked.
-export function canonicalReportString(id: string, req: CertifyRequest, result: VerdictResult, createdAt: string): string {
+//
+// The key order here IS the wire format. Reordering, adding, or removing a
+// field invalidates every certificate ever issued.
+export function canonicalString(r: CanonicalReport): string {
   return JSON.stringify({
+    id: r.id,
+    client_version: r.client_version,
+    device_name: r.device_name,
+    fingerprint_hash: r.fingerprint_hash,
+    verdict: r.verdict,
+    vram_total_errors: r.vram_total_errors,
+    vram_bytes_tested: r.vram_bytes_tested,
+    stress_peak_temp_c: r.stress_peak_temp_c,
+    stress_thermally_stable: r.stress_thermally_stable,
+    stress_aborted_for_safety: r.stress_aborted_for_safety,
+    vram_aborted_for_safety: r.vram_aborted_for_safety,
+    pcie_link_width_current: r.pcie_link_width_current,
+    pcie_link_width_max: r.pcie_link_width_max,
+    fur_mismatches: r.fur_mismatches,
+    fur_pixels_checked: r.fur_pixels_checked,
+    fur_aborted_for_safety: r.fur_aborted_for_safety,
+    created_at: r.created_at,
+  });
+}
+
+// The ingest side: what gets signed when a report first arrives.
+export function canonicalReportString(id: string, req: CertifyRequest, result: VerdictResult, createdAt: string): string {
+  return canonicalString({
     id,
     client_version: req.client_version,
     device_name: req.device_name,
@@ -163,5 +224,35 @@ export function canonicalReportString(id: string, req: CertifyRequest, result: V
     fur_pixels_checked: req.fur_test.pixels_checked,
     fur_aborted_for_safety: req.fur_test.aborted_for_safety,
     created_at: createdAt,
+  });
+}
+
+// The verification side: rebuilds the exact same payload from what was
+// stored, so a third party can re-derive it and check the signature.
+//
+// SQLite has no boolean type, so the flags come back as 0/1 and have to be
+// converted rather than passed through — `0` would serialize as `0`, not
+// `false`, and the signature would never match. Numbers go through
+// `Number()` for the same class of reason: the driver may hand back a
+// BigInt for a large integer column, and `JSON.stringify` throws on those.
+export function canonicalReportStringFromRow(row: ReportRow): string {
+  return canonicalString({
+    id: row.id,
+    client_version: row.client_version,
+    device_name: row.device_name,
+    fingerprint_hash: row.fingerprint_hash,
+    verdict: row.verdict,
+    vram_total_errors: Number(row.vram_total_errors),
+    vram_bytes_tested: Number(row.vram_bytes_tested),
+    stress_peak_temp_c: Number(row.stress_peak_temp_c),
+    stress_thermally_stable: Number(row.stress_thermally_stable) === 1,
+    stress_aborted_for_safety: Number(row.stress_aborted_for_safety) === 1,
+    vram_aborted_for_safety: Number(row.vram_aborted_for_safety) === 1,
+    pcie_link_width_current: Number(row.pcie_link_width_current),
+    pcie_link_width_max: Number(row.pcie_link_width_max),
+    fur_mismatches: Number(row.fur_mismatches),
+    fur_pixels_checked: Number(row.fur_pixels_checked),
+    fur_aborted_for_safety: Number(row.fur_aborted_for_safety) === 1,
+    created_at: row.created_at,
   });
 }

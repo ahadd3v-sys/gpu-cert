@@ -7,22 +7,40 @@ use std::ffi::CStr;
 pub struct VulkanContext {
     _entry: ash::Entry,
     pub instance: ash::Instance,
-    pub physical_device: vk::PhysicalDevice,
     pub device: ash::Device,
     pub queue: vk::Queue,
     pub queue_family_index: u32,
     pub device_local_memory_type: u32,
     pub host_visible_memory_type: u32,
     pub device_name: String,
-    /// VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0] — the real cap on
-    /// a single vkCmdDispatch's X-dimension group count. Confirmed on real
-    /// hardware (an RX 6600) that exceeding this doesn't produce a
-    /// validation error or a clean clamp: the driver silently executes
-    /// something other than the requested count (observed: dispatching
-    /// ~7.1M groups when the real limit was ~4.2M corrupted results, not
-    /// just truncated them safely). Large single-dispatch compute kernels
-    /// must chunk against this rather than assume it's unbounded.
+    /// VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0] — the cap on a
+    /// single vkCmdDispatch's X-dimension group count. The spec's required
+    /// minimum is 65535; real drivers report far more.
     pub max_compute_workgroups_x: u32,
+    /// VkPhysicalDeviceLimits::maxStorageBufferRange — the largest `range`
+    /// a single STORAGE_BUFFER descriptor may cover
+    /// (VUID-VkWriteDescriptorSet-descriptorType-00333). It is a `uint32_t`,
+    /// so it can never exceed 4 GiB-1 no matter how much VRAM the card has,
+    /// and AMD/Nvidia both report values at or below that.
+    ///
+    /// This is not advisory. Binding a larger range doesn't fail loudly: the
+    /// range truncates and the shader silently cannot address past it.
+    /// Confirmed on an RX 6600, where binding a 7,287,183,768-byte buffer
+    /// left only `7,287,183,768 mod 2^32` = 2,992,216,472 bytes reachable —
+    /// every element past that read back as zero and was miscounted as a
+    /// VRAM error. Anything testing more memory than this must split it
+    /// across several buffers.
+    pub max_storage_buffer_range: u32,
+    /// VkPhysicalDeviceMaintenance3Properties::maxMemoryAllocationSize — the
+    /// largest single vkAllocateMemory this device permits. Frequently
+    /// smaller than the heap (3.5 GiB on the RX 6600 against 8 GiB of VRAM),
+    /// so covering a card's whole VRAM always means several allocations.
+    pub max_memory_allocation_size: u64,
+    /// Size of the heap backing `device_local_memory_type`. The upper bound
+    /// on what the VRAM test could ever allocate, and typically a better
+    /// number than the vendor telemetry's VRAM total, which counts memory
+    /// Vulkan can't hand out.
+    pub device_local_heap_size: u64,
 }
 
 impl VulkanContext {
@@ -54,6 +72,27 @@ impl VulkanContext {
                 .to_string_lossy()
                 .into_owned();
             let max_compute_workgroups_x = props.limits.max_compute_work_group_count[0];
+            let max_storage_buffer_range = props.limits.max_storage_buffer_range;
+
+            // maxMemoryAllocationSize lives in VkPhysicalDeviceMaintenance3Properties,
+            // reachable via vkGetPhysicalDeviceProperties2 — core in Vulkan 1.1
+            // but *not* in 1.0, and calling it against a 1.0 device is invalid.
+            // Every GPU this client targets is 1.1+, so the fallback below is
+            // belt-and-braces rather than a path expected to run: 256 MiB is
+            // the spec's required minimum for maxStorageBufferRange, which
+            // makes it a safe floor to assume when nothing better is known.
+            const CONSERVATIVE_MAX_ALLOCATION: u64 = 256 * 1024 * 1024;
+            let max_memory_allocation_size = if vk::api_version_major(props.api_version) >= 1
+                && vk::api_version_minor(props.api_version) >= 1
+            {
+                let mut maintenance3 = vk::PhysicalDeviceMaintenance3Properties::default();
+                let mut props2 =
+                    vk::PhysicalDeviceProperties2::default().push_next(&mut maintenance3);
+                instance.get_physical_device_properties2(physical_device, &mut props2);
+                maintenance3.max_memory_allocation_size
+            } else {
+                CONSERVATIVE_MAX_ALLOCATION
+            };
 
             // GRAPHICS, not just COMPUTE: the fur render test (graphics
             // pipeline correctness/display-output check) needs a
@@ -84,19 +123,26 @@ impl VulkanContext {
             let queue = device.get_device_queue(queue_family_index, 0);
 
             let mem_props = instance.get_physical_device_memory_properties(physical_device);
+            // Largest heap, not merely the first match: AMD cards expose a
+            // small (typically 256 MiB) DEVICE_LOCAL|HOST_VISIBLE type for the
+            // PCIe BAR window alongside the real VRAM heap, and on some driver
+            // versions it enumerates first. Taking the first DEVICE_LOCAL type
+            // would then cap the VRAM test at the BAR size and silently test a
+            // fraction of the card.
             let device_local_memory_type =
-                find_memory_type(&mem_props, vk::MemoryPropertyFlags::DEVICE_LOCAL)
+                find_largest_heap_memory_type(&mem_props, vk::MemoryPropertyFlags::DEVICE_LOCAL)
                     .ok_or_else(|| anyhow::anyhow!("no DEVICE_LOCAL memory type found"))?;
-            let host_visible_memory_type = find_memory_type(
+            let host_visible_memory_type = find_largest_heap_memory_type(
                 &mem_props,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             )
             .ok_or_else(|| anyhow::anyhow!("no HOST_VISIBLE|HOST_COHERENT memory type found"))?;
+            let device_local_heap_size = heap_size_of(&mem_props, device_local_memory_type);
 
             Ok(VulkanContext {
                 _entry: entry,
                 instance,
-                physical_device,
+
                 device,
                 queue,
                 queue_family_index,
@@ -104,20 +150,30 @@ impl VulkanContext {
                 host_visible_memory_type,
                 device_name,
                 max_compute_workgroups_x,
+                max_storage_buffer_range,
+                max_memory_allocation_size,
+                device_local_heap_size,
             })
         }
     }
 }
 
-fn find_memory_type(
+fn find_largest_heap_memory_type(
     mem_props: &vk::PhysicalDeviceMemoryProperties,
     required: vk::MemoryPropertyFlags,
 ) -> Option<u32> {
-    (0..mem_props.memory_type_count).find(|&i| {
-        mem_props.memory_types[i as usize]
-            .property_flags
-            .contains(required)
-    })
+    (0..mem_props.memory_type_count)
+        .filter(|&i| {
+            mem_props.memory_types[i as usize]
+                .property_flags
+                .contains(required)
+        })
+        .max_by_key(|&i| heap_size_of(mem_props, i))
+}
+
+fn heap_size_of(mem_props: &vk::PhysicalDeviceMemoryProperties, memory_type: u32) -> u64 {
+    let heap_index = mem_props.memory_types[memory_type as usize].heap_index;
+    mem_props.memory_heaps[heap_index as usize].size
 }
 
 impl Drop for VulkanContext {
