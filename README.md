@@ -6,9 +6,12 @@
 
 ## Preview
 
-The site's live now: **https://gpucert.com**. The original
-`gpu-cert.vercel.app` alias stays active, so certificates issued before the
-move and exes already downloaded both keep working.
+The site's live now: **https://gpucert.com**, and that is the only
+address. `gpu-cert.vercel.app` and `gpucert.anurfi.net` were removed from the
+project, not just unaliased: Vercel re-assigns `<project>.vercel.app` on every
+production deploy, so an alias removal silently undoes itself. Clients released
+before the move pointed at the old host and are handled by the version floor
+(see below) rather than by keeping a second name alive.
 
 The report page (`backend/src/report-page.ts`) is styled as an actual
 certificate rather than a plain results screen: masthead, GPU spec table,
@@ -164,22 +167,6 @@ The page is also explicit about what a valid signature does *not* prove: that
 the person showing it owns the card. That is what the hardware fingerprint on
 the certificate is for.
 
-## Measurement
-
-A certificate nobody opens is worth nothing at any price, so the dashboard
-tracks two numbers per certificate: badge impressions (the listing was on
-someone's screen) and certificate opens (they clicked through to read it).
-Impressions against clickthroughs is the question of whether the product
-works, and it is the number that decides what, if anything, is worth charging
-for.
-
-No cookies and no third-party script. The viewer hash is salted and rotates
-daily, so it distinguishes people within a day and cannot follow anyone across
-days. Only the referring host is kept, never the full URL, since a Referer can
-carry a search query or a private listing path. The owner's own visits are
-excluded, as are crawlers and the link unfurls Discord, Slack and Reddit send,
-because counting those would flatter the one number that has to stay honest.
-
 ## Verification protocol
 
 Three tests, each documented and scored; see `backend/lib/certify.ts`
@@ -288,11 +275,11 @@ actually be verified here vs. what's still gated on real hardware:
   to ship from. Still unverified: whether it actually *runs* correctly:
   no real Windows machine or GPU here to test against.
 - **Resolved: the client's unit tests run.** A native `cc` is present now, so
-  `cargo test` links and passes (7 tests). The backend has its own checks:
+  `cargo test` links and passes (12 tests). The backend has its own checks:
   `npm run check` (typecheck + signing round-trip and tamper detection) and
   `npm run smoke` (boots the server against a throwaway DB and exercises
   ingest, the certificate page, verification, the badge and the redirect
-  guard end to end, 19 assertions).
+  guard end to end, 73 assertions).
 - **NVML/ADL/Vulkan can't be exercised at all here**: no real driver, GPU,
   or Windows Vulkan ICD in this dev environment. `cargo check`/`cargo build`
   (native Linux target) and the shader→SPIR-V build step both pass, and the
