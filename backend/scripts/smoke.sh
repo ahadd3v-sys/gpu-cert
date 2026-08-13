@@ -56,7 +56,7 @@ report() {
 "client_version":"$CURRENT","device_name":"AMD Radeon RX 6600","pcie_link_width_current":8,"pcie_link_width_max":8,
 "fingerprint":{"uuid":"PCI_VEN_1002&DEV_73FF","pci_device_id":29695,"vram_total_bytes":8573157376,"vbios_version":"113-EXT47001-002","hash":"$FP"},
 "stress_test":{"dispatch_count":513,"duration_ms":300000,"telemetry_series":[{"elapsed_ms":1000,"temperature_c":58,"power_draw_mw":100000,"graphics_clock_mhz":2000,"memory_clock_mhz":1750,"utilization_pct":99}],"aborted_for_safety":false},
-"vram_test":{"passes_run":12563,"total_errors":$errors,"bytes_tested":7287183768,"duration_ms":600000,"aborted_for_safety":false},
+"vram_test":{"passes_run":12563,"total_errors":$errors,"bytes_tested":7287183768,"duration_ms":300000,"aborted_for_safety":false},
 "fur_test":{"frames_rendered":$frames,"duration_ms":45000,"mismatches":$mismatches,"pixels_checked":$(( frames * 65536 )),"aborted_for_safety":false}}
 JSON
 }
@@ -191,7 +191,6 @@ read -r FSID FNONCE <<<"$(kit start "$FP")"
 kit backdate "$FSID" 1000 9 >/dev/null
 FAST=$(report "$FSID" "$FNONCE" \
   | sed 's/"duration_ms":300000/"duration_ms":20000/' \
-  | sed 's/"duration_ms":600000/"duration_ms":20000/' \
   | sed 's/"duration_ms":45000/"duration_ms":10000/')
 check "a --fast run cannot be certified" \
   "$([ "$(post_report "$FAST")" = "422" ] && echo 1 || echo 0)"
@@ -204,7 +203,6 @@ read -r ASID ANONCE <<<"$(kit start "$FP")"
 kit backdate "$ASID" 1000 9 >/dev/null
 ABORTED=$(report "$ASID" "$ANONCE" \
   | sed 's/"duration_ms":300000/"duration_ms":20000/' \
-  | sed 's/"duration_ms":600000/"duration_ms":20000/' \
   | sed 's/"duration_ms":45000/"duration_ms":10000/' \
   | sed 's/"aborted_for_safety":false/"aborted_for_safety":true/g')
 check "a run aborted for safety still certifies" \

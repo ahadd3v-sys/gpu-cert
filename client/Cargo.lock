@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "gpu-cert"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "anyhow",
  "ash",

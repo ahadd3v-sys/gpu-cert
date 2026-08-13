@@ -74,7 +74,20 @@ fn load_gpu_backend() -> anyhow::Result<GpuBackend> {
 // developer-only escape hatch for iterating on the client itself, not a
 // public option; the website's download always runs the real durations.
 const STRESS_TEST_DURATION: Duration = Duration::from_secs(5 * 60);
-const VRAM_TEST_DURATION: Duration = Duration::from_secs(10 * 60);
+/// Was ten minutes, which made the whole run about sixteen.
+///
+/// A tester with an RTX 3070 said flatly that the VRAM test is too long, and
+/// the numbers agree: that card completed 10,754 passes over 6.7 GB in ten
+/// minutes, and essentially every deterministic fault is caught in the first
+/// handful. The rest was buying a slowly diminishing chance of catching an
+/// intermittent one, at the cost of the thing that actually limits this
+/// product right now, which is people finishing the run at all. Two runs have
+/// already been cancelled by hand.
+///
+/// Five minutes still means thousands of passes, and the certificate prints
+/// the pass count, so the claim stays quantified rather than vague. Change
+/// REAL_TEST_DURATION_MS in backend/lib/attestation.ts in the same commit.
+const VRAM_TEST_DURATION: Duration = Duration::from_secs(5 * 60);
 const VRAM_TEST_FRACTION: f64 = 0.85;
 // Short relative to the other two: this is a correctness/display-output
 // check exercised under load, not a thermal soak, that's already covered
@@ -87,6 +100,10 @@ const FUR_TEST_DURATION: Duration = Duration::from_secs(45);
 // passes and a real stress-telemetry series, short enough not to burn 16
 // minutes per iteration. Never advertised, never what the website's
 // download runs, a certificate produced this way isn't a real one.
+/// How often telemetry is sampled during the stress test. See the sampling
+/// comment in `run` for why this is not once per dispatch.
+const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+
 const FAST_STRESS_TEST_DURATION: Duration = Duration::from_secs(20);
 const FAST_VRAM_TEST_DURATION: Duration = Duration::from_secs(20);
 const FAST_FUR_TEST_DURATION: Duration = Duration::from_secs(10);
@@ -277,11 +294,25 @@ fn run() -> anyhow::Result<()> {
     screen.start(0, "starting");
     let mut telemetry_series = Vec::new();
     let stress_started = Instant::now();
+    // Sampled about once a second, not once per dispatch.
+    //
+    // Per dispatch meant 52 samples a second on an RX 9060 XT, which produced
+    // 2 MB of telemetry JSON for one report: stored, signed, and served on
+    // every certificate view, to draw a chart that cannot resolve more than a
+    // few hundred points anyway. One a second is 50 times smaller and loses
+    // nothing a reader could see. It also stops the NVML calls themselves
+    // becoming a measurable share of the load being measured.
+    //
+    // The safety watchdog rides on the same tick, which is fine at this rate:
+    // the abort threshold is 100C and no card climbs into that from a safe
+    // temperature within a second.
+    let mut last_sample: Option<Instant> = None;
     let stress_run = vulkan::stress::run(&ctx, stress_duration, |elapsed| {
-        // Re-sampling telemetry every tick is deliberately cheap (a few
-        // NVML calls) relative to the dispatch itself, so it doesn't skew
-        // the load being measured.
         session.heartbeat();
+        if last_sample.is_some_and(|t| t.elapsed() < SAMPLE_INTERVAL) {
+            return true;
+        }
+        last_sample = Some(Instant::now());
         match gpu.read_primary_gpu() {
             Ok(sample_telemetry) => {
                 let sample = sample_from_telemetry(elapsed, &sample_telemetry);

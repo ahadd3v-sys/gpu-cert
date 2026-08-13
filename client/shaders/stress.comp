@@ -1,8 +1,48 @@
 #version 450
 
-// Sustained FMA/matmul-style compute load. Analogous to what OCCT/GpuTest's
-// compute stress tests do: keep every ALU lane busy long enough to expose
-// thermal throttling and power-limit behavior under load.
+// Sustained ALU load, heavy enough that the temperature and power numbers on
+// the certificate mean something.
+//
+// The previous version of this kernel reported 98% "utilization" while drawing
+// 149 W on an RTX 3070, a card rated for 220 W, and the die never passed 60 C.
+// That is not a stress test, and a certificate saying "thermally stable" on the
+// back of it is a claim about a load the card was never put under.
+//
+// Utilization is the misleading number. NVML reports the fraction of time any
+// kernel was resident, not how much of the die was working, so a kernel that
+// leaves most of the FMA units idle still reads 98%.
+//
+// What was actually wrong was the dependency chain:
+//
+//     a = fma(a, b, k);   // b's next value needs this result
+//     b = fma(b, a, k);   // a's next value needs this one
+//     a = a - floor(a * 0.001) * 1000.0;
+//
+// Every operation depended on the one before it, so each thread had at most one
+// FMA in flight and spent the rest of the time waiting on latency that
+// occupancy alone could not hide. The floor() calls made it worse: they are
+// special-function work, issued on a much narrower unit than the FMA pipe, so
+// the bounding arithmetic throttled the very thing being measured while
+// contributing nothing to the test.
+//
+// This version keeps eight independent chains per thread. They never read each
+// other, so the compiler can issue them back to back and the FMA pipeline stays
+// fed. Everything lives in registers and the only memory traffic is one read at
+// the start and one write at the end, because heat comes from arithmetic
+// density, not from bandwidth. The VRAM test already covers memory.
+//
+// Bounding is now free. Each chain is x = fma(x, m, c) with m just under 1.0,
+// which converges toward c/(1-m) and can neither overflow nor produce a NaN,
+// so no clamping instructions are needed in the loop at all.
+//
+// The multipliers are derived from the buffer's contents rather than written as
+// literals, so none of this can be constant-folded away at compile time, and
+// the sum is written back so the whole loop cannot be eliminated as dead.
+//
+// Note for anyone tempted to switch API: this being Vulkan is not why the old
+// kernel ran cool, and OpenGL or D3D12 would not have run hotter. FurMark heats
+// cards because of what it computes per pixel, not because of the API it
+// computes it through. The instruction mix is the whole story.
 
 layout(local_size_x = 256) in;
 
@@ -20,15 +60,48 @@ void main() {
         return;
     }
 
-    float a = values[idx];
-    float b = fract(float(idx) * 0.6180339887);
+    // Runtime-dependent, so nothing below folds to a constant.
+    float seed = fract(values[idx] * 0.0001 + float(idx) * 0.6180339887);
+
+    // Eight independent accumulators. Kept as named scalars rather than an
+    // array so they are guaranteed to live in registers instead of risking a
+    // spill to local memory, which would turn an ALU test into a memory test.
+    float a0 = seed + 0.10;
+    float a1 = seed + 0.20;
+    float a2 = seed + 0.30;
+    float a3 = seed + 0.40;
+    float a4 = seed + 0.50;
+    float a5 = seed + 0.60;
+    float a6 = seed + 0.70;
+    float a7 = seed + 0.80;
+
+    // Just under 1.0, so each chain converges instead of diverging. Derived
+    // from the seed for the same anti-folding reason.
+    float m = 0.99900 + seed * 0.00001;
+    float c = 0.00012345;
 
     for (uint i = 0u; i < pc.iterations; i++) {
-        a = fma(a, b, 0.0001);
-        b = fma(b, a, 0.0001);
-        a = a - floor(a * 0.001) * 1000.0; // keep values bounded
-        b = b - floor(b * 0.001) * 1000.0;
+        // No chain reads another, so all eight FMAs are independent and can be
+        // issued without waiting. This is the entire fix.
+        a0 = fma(a0, m, c);
+        a1 = fma(a1, m, c);
+        a2 = fma(a2, m, c);
+        a3 = fma(a3, m, c);
+        a4 = fma(a4, m, c);
+        a5 = fma(a5, m, c);
+        a6 = fma(a6, m, c);
+        a7 = fma(a7, m, c);
+
+        a0 = fma(a0, m, c);
+        a1 = fma(a1, m, c);
+        a2 = fma(a2, m, c);
+        a3 = fma(a3, m, c);
+        a4 = fma(a4, m, c);
+        a5 = fma(a5, m, c);
+        a6 = fma(a6, m, c);
+        a7 = fma(a7, m, c);
     }
 
-    values[idx] = a + b;
+    // Written back so none of the above is dead code.
+    values[idx] = ((a0 + a1) + (a2 + a3)) + ((a4 + a5) + (a6 + a7));
 }

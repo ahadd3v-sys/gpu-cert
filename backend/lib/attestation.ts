@@ -168,7 +168,7 @@ export function checkReportConsistency(req: CertifyRequest): string[] {
 /// change it here in the same commit or every honest run starts failing.
 const REAL_TEST_DURATION_MS = {
   stress: 5 * 60_000,
-  vram: 10 * 60_000,
+  vram: 5 * 60_000,
   fur: 45_000,
 } as const;
 
