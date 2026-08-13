@@ -6,22 +6,24 @@ mod ui;
 
 fn main() {
     ui::init();
+    ui::banner(env!("CARGO_PKG_VERSION"));
     let mut screen = ui::Screen::new(env!("CARGO_PKG_VERSION"), false);
-    screen.set_device("AMD Radeon RX 6600", 8176, "Vulkan: AMD Radeon RX 6600");
+    screen.set_device("AMD Radeon RX 6600", 8176, "AMD Radeon RX 6600");
     screen.finish(0, "15739 dispatches, peak 66\u{b0}C");
-    screen.finish(1, "6878 passes over 6787 MB (83% of the card), 0 errors");
+    screen.start(1, "allocating");
+    screen.update(1, 0.38, "pass 812, 0 errors");
+    screen.finish(1, "6878 passes, 6787 MB (83%), 0 errors");
     screen.start(2, "comparing every pixel of every frame");
     screen.update(2, 0.62, "comparing every pixel of every frame");
-    println!("\n\n--- final screen ---\n");
     ui::result(
         env!("CARGO_PKG_VERSION"),
         true,
         "AMD Radeon RX 6600 passed every test",
         &[
             ("Coverage", "83% of VRAM, 0 errors".to_string()),
-            ("Report", "https://gpucert.com/r/fbe4ebfd-422a-4e7f-92e8".to_string()),
-            ("Badge", "https://gpucert.com/r/fbe4ebfd-422a-4e7f-92e8/badge".to_string()),
-            ("Account", "not attached. You can attach it from the report page.".to_string()),
+            ("Report", "https://gpucert.com/r/fbe4ebfd".to_string()),
+            ("Badge", "https://gpucert.com/r/fbe4ebfd/badge".to_string()),
+            ("Account", "not attached. Add it from the report page.".to_string()),
         ],
     );
 }

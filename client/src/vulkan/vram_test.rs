@@ -132,19 +132,19 @@ pub fn run(
     } else {
         0.0
     };
-    println!(
-        "  testing {} MB of {} MB VRAM ({:.0}%) across {} segment(s)",
+    crate::diag::record(format!(
+        "testing {} MB of {} MB VRAM ({:.0}%) across {} segment(s)",
         buffer_size / 1_048_576,
         vram_total_bytes / 1_048_576,
         coverage_pct,
         segments.len(),
-    );
+    ));
     // Enough to tell, from the output alone, *why* coverage came out where it
     // did. A shortfall caused by picking the wrong memory type looks identical
     // on the certificate to one caused by a busy card, and telling them apart
     // previously meant reasoning backwards from allocation arithmetic.
-    println!(
-        "  (device-local memory types {:?} on heap {} of {} MB; driver reports {} MB allocatable now)",
+    crate::diag::record(format!(
+        "device-local memory types {:?} on heap {} of {} MB; driver reports {} MB allocatable now",
         ctx.device_local_memory_types,
         ctx.device_local_heap_index,
         ctx.device_local_heap_size / 1_048_576,
@@ -152,15 +152,14 @@ pub fn run(
             Some(available) => (available / 1_048_576).to_string(),
             None => "unknown".to_string(),
         },
-    );
+    ));
     // Coverage is on the certificate, so a low number needs explaining to the
     // person running it while they can still do something about it. Anything
     // already resident (browser, compositor, another game) is memory this
     // test cannot reach, and no amount of retrying changes that.
     if coverage_pct < 60.0 {
-        println!(
-            "  note: other applications are holding VRAM, so less of the card can be tested. \
-             Closing them and re-running will cover more."
+        crate::diag::record(
+            "coverage under 60%: other applications are holding VRAM this test cannot reach",
         );
     }
 
@@ -228,12 +227,12 @@ pub fn run(
             total_errors += pass_errors;
             passes_run += 1;
             if let Some((seg_index, [idx, actual, expected])) = first_failure {
-                println!(
-                    "\n  pass {passes_run}: {pass_errors} error(s) across {element_count} elements, \
+                crate::diag::record(format!(
+                    "pass {passes_run}: {pass_errors} error(s) across {element_count} elements, \
                      seed=0x{seed:08x}, first in segment {seg_index} at idx={idx} \
                      actual=0x{actual:08x} expected=0x{expected:08x} xor=0x{:08x}",
                     actual ^ expected
-                );
+                ));
             }
             if !on_pass(passes_run, total_errors, started.elapsed()) {
                 aborted_for_safety = true;
@@ -401,7 +400,7 @@ fn allocate_segments(
         stopped_because,
         if last_error.is_empty() { String::new() } else { format!(" ({last_error})") },
     );
-    println!("  {diagnostics}");
+    crate::diag::record(&diagnostics);
 
     finish_segments(segments).map(|s| (s, diagnostics))
 }

@@ -264,7 +264,9 @@ impl Adl {
                 unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlBiosInfo) -> c_int
             );
             if adapter_vbios_info_get.is_none() {
-                println!("(ADL2_Adapter_VBIOSInfo_Get not available on this driver, VBIOS version will report as \"unknown\")");
+                crate::diag::record(
+                    "ADL2_Adapter_VBIOSInfo_Get not available on this driver, VBIOS reports as unknown",
+                );
             }
             let new_query_pmlog_data_get = sym!(
                 b"ADL2_New_QueryPMLogData_Get\0",
@@ -317,10 +319,10 @@ impl Adl {
             let mut candidates: Vec<(c_int, i64, String)> = Vec::new();
             for info in &infos {
                 let name = cstr_field(&info.adapter_name);
-                println!(
-                    "  ADL adapter {}: vendor={} present={} name={name:?}",
+                crate::diag::record(format!(
+                    "ADL adapter {}: vendor={} present={} name={name:?}",
                     info.adapter_index, info.vendor_id, info.present,
-                );
+                ));
                 if info.vendor_id != AMD_VENDOR_ID || info.present == 0 {
                     continue;
                 }
@@ -336,11 +338,11 @@ impl Adl {
                 let mut pmlog = AdlPmLogDataOutput::zeroed();
                 let has_temp = (new_query_pmlog_data_get)(context, *idx, &mut pmlog) == ADL_OK
                     && pmlog.sensors.get(PMLOG_TEMPERATURE_EDGE).is_some_and(|s| s.supported != 0);
-                println!(
-                    "  candidate adapter {idx} ({name:?}, {} MB reported VRAM): temperature sensor {}",
+                crate::diag::record(format!(
+                    "candidate adapter {idx} ({name:?}, {} MB reported VRAM): temperature sensor {}",
                     vram / 1_048_576,
                     if has_temp { "available" } else { "unavailable" },
-                );
+                ));
                 if has_temp {
                     chosen = Some(*idx);
                     break;

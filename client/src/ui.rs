@@ -37,7 +37,15 @@ const WORDMARK: [&str; 5] = [
     " ███  █      ███     ███  █████ █   █   █  ",
 ];
 
-const RULE: &str = "───────────────────────────────────────────────────────────────";
+const RULE: &str = "───────────────────────────────────────────";
+
+/// Erase from the cursor to the end of the line.
+///
+/// Every drawn line ends with this. Without it a frame only overwrites the
+/// columns it actually uses, so anything longer printed earlier survives to
+/// the right of it: a real run showed "Card  AMD Radeon RX 6600" with the tail
+/// of an unrelated diagnostic line still attached to it.
+const EOL: &str = "\x1b[K";
 
 // Deliberately few. The certificate is ink on paper with one accent; the
 // console should not be a different product.
@@ -145,6 +153,8 @@ pub struct Screen {
     vulkan: String,
     fast: bool,
     steps: Vec<Step>,
+    first_draw: bool,
+    notice: Option<String>,
 }
 
 impl Screen {
@@ -155,6 +165,8 @@ impl Screen {
             vram_mb: 0,
             vulkan: String::new(),
             fast,
+            first_draw: true,
+            notice: None,
             steps: vec![
                 Step { name: "Stress test", state: StepState::Pending, detail: String::new(), progress: 0.0 },
                 Step { name: "VRAM pattern test", state: StepState::Pending, detail: String::new(), progress: 0.0 },
@@ -203,78 +215,105 @@ impl Screen {
         self.draw();
     }
 
-    /// Printed rather than drawn into the screen, because it must survive the
-    /// next redraw: a card that hit the safety limit is the single most
-    /// important thing this program can tell someone.
-    pub fn warn(&mut self, message: &str) {
-        if ansi() {
-            print!("\x1b[2J\x1b[H");
-        }
-        println!("\n  {}  {}\n", paint(YELLOW, "!"), paint(BOLD, message));
-        let _ = std::io::stdout().flush();
+    /// Held in the frame rather than printed alongside it. Printing would put
+    /// it outside the redrawn region, where the next frame a second later
+    /// wipes it, and a card that hit the safety limit is the single most
+    /// important thing this program can say.
+    pub fn notice(&mut self, message: &str) {
+        self.notice = Some(message.to_string());
+        self.draw();
     }
 
-    fn draw(&self) {
+    fn draw(&mut self) {
         if !ansi() {
-            // Plain fallback: only ever print a step's final line, so a piped
-            // log gets three lines rather than a thousand progress updates.
-            if let Some(step) = self.steps.iter().find(|s| s.state == StepState::Running) {
-                let _ = step;
-            }
             return;
         }
 
         let mut out = String::new();
-        // Home, not clear: a full clear every tick flickers.
-        out.push_str("\x1b[H\n");
-        for row in WORDMARK {
-            out.push_str(&format!("  {}\n", paint(BOLD, row)));
+        // The first frame clears everything above it: the banner, the account
+        // prompt, and anything a driver printed on its way up. Later frames
+        // only home the cursor, because a full clear every tick flickers
+        // badly on Windows consoles.
+        if self.first_draw {
+            out.push_str("\x1b[2J");
+            self.first_draw = false;
         }
-        out.push('\n');
-        out.push_str(&format!(
-            "  {}\n",
-            paint(DIM, &format!("Hardware Verification Certificate    v{}", self.version))
-        ));
-        out.push_str(&format!("  {}\n\n", paint(DIM, RULE)));
+        out.push_str("\x1b[H");
+
+        let line = |out: &mut String, text: &str| {
+            out.push_str(text);
+            out.push_str(EOL);
+            out.push('\n');
+        };
+
+        line(&mut out, "");
+        for row in WORDMARK {
+            line(&mut out, &format!("  {}", paint(BOLD, row)));
+        }
+        line(&mut out, "");
+        line(
+            &mut out,
+            &format!(
+                "  {}",
+                paint(DIM, &format!("Hardware Verification Certificate    v{}", self.version))
+            ),
+        );
+        line(&mut out, &format!("  {}", paint(DIM, RULE)));
 
         if !self.device.is_empty() {
-            out.push_str(&format!("  {}  {}\n", paint(DIM, "Card   "), paint(BOLD, &self.device)));
-            out.push_str(&format!(
-                "  {}  {} MB    {}\n",
-                paint(DIM, "Memory "),
-                self.vram_mb,
-                paint(DIM, &self.vulkan)
-            ));
-            out.push('\n');
+            // The Vulkan device name is only shown when it differs from what
+            // the vendor telemetry reported. Identical is the normal case and
+            // printing the same string twice is noise; different is worth
+            // seeing, because it is the disagreement device selection exists
+            // to catch.
+            let extra = if self.vulkan.is_empty() || self.vulkan == self.device {
+                format!(", {} MB", self.vram_mb)
+            } else {
+                format!(", {} MB, Vulkan reports {}", self.vram_mb, self.vulkan)
+            };
+            line(&mut out, &format!("  {}{}", paint(BOLD, &self.device), paint(DIM, &extra)));
         }
+        line(&mut out, "");
 
         if self.fast {
-            out.push_str(&format!(
-                "  {}\n\n",
-                paint(YELLOW, "--fast: debug-length tests. This will not produce a certificate.")
-            ));
+            line(
+                &mut out,
+                &format!("  {}", paint(YELLOW, "--fast: debug run, this will not produce a certificate")),
+            );
+            line(&mut out, "");
+        }
+
+        if let Some(notice) = &self.notice {
+            line(&mut out, &format!("  {}  {}", paint(YELLOW, "!"), paint(BOLD, notice)));
+            line(&mut out, "");
         }
 
         for step in &self.steps {
-            let (mark, name) = match step.state {
-                StepState::Pending => (paint(DIM, "  "), paint(DIM, step.name)),
-                StepState::Running => (paint(BOLD, "> "), paint(BOLD, step.name)),
-                StepState::Done => (paint(GREEN, "ok"), step.name.to_string()),
-                StepState::Failed => (paint(RED, "!!"), paint(RED, step.name)),
-            };
-            out.push_str(&format!("  {mark}  {name}\n"));
-
-            if step.state == StepState::Running {
-                out.push_str(&format!("      {}\n", bar(step.progress)));
+            match step.state {
+                // Finished steps collapse to one line. The result is the only
+                // part still worth space.
+                StepState::Done => line(
+                    &mut out,
+                    &format!("  {}  {:<22} {}", paint(GREEN, "ok"), step.name, paint(DIM, &step.detail)),
+                ),
+                StepState::Failed => {
+                    line(&mut out, &format!("  {}  {}", paint(RED, "!!"), paint(RED, step.name)));
+                    line(&mut out, &format!("      {}", paint(RED, &step.detail)));
+                }
+                StepState::Pending => {
+                    line(&mut out, &format!("  {}  {}", paint(DIM, ".."), paint(DIM, step.name)))
+                }
+                StepState::Running => {
+                    line(&mut out, &format!("  {}  {}", paint(BOLD, ">>"), paint(BOLD, step.name)));
+                    line(&mut out, &format!("      {}", bar(step.progress)));
+                    if !step.detail.is_empty() {
+                        line(&mut out, &format!("      {}", paint(DIM, &step.detail)));
+                    }
+                }
             }
-            if !step.detail.is_empty() && step.state != StepState::Pending {
-                out.push_str(&format!("      {}\n", paint(DIM, &step.detail)));
-            }
-            out.push('\n');
         }
 
-        // Clear from the cursor to the end, so a shorter frame cannot leave
-        // fragments of a longer one behind it.
+        // Clears any rows a taller previous frame left below this one.
         out.push_str("\x1b[J");
         print!("{out}");
         let _ = std::io::stdout().flush();

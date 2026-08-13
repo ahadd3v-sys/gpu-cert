@@ -211,11 +211,7 @@ fn run() -> anyhow::Result<()> {
         name: telemetry.name.clone(),
     })?;
     let mut screen = ui::Screen::new(env!("CARGO_PKG_VERSION"), fast);
-    screen.set_device(
-        &telemetry.name,
-        telemetry.vram_total_bytes / 1_048_576,
-        &format!("Vulkan: {}", ctx.device_name),
-    );
+    screen.set_device(&telemetry.name, telemetry.vram_total_bytes / 1_048_576, &ctx.device_name);
     diag::record(format!(
         "selected {}: heap {} of {}MB, device-local types {:?}, maxStorageBufferRange={}, maxMemoryAllocationSize={}MB, budget={}",
         ctx.device_name,
@@ -283,7 +279,7 @@ fn run() -> anyhow::Result<()> {
                 let unsafe_temp = safety::is_temp_unsafe(sample.temperature_c);
                 telemetry_series.push(sample);
                 if unsafe_temp {
-                    screen.warn(&abort_warning(sample_telemetry.temperature_c));
+                    screen.notice(&abort_warning(sample_telemetry.temperature_c));
                 }
                 !unsafe_temp
             }
@@ -322,7 +318,7 @@ fn run() -> anyhow::Result<()> {
                 Ok(t) => {
                     let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
                     if unsafe_temp {
-                        screen.warn(&abort_warning(t.temperature_c));
+                        screen.notice(&abort_warning(t.temperature_c));
                     }
                     !unsafe_temp
                 }
@@ -359,7 +355,7 @@ fn run() -> anyhow::Result<()> {
             Ok(t) => {
                 let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
                 if unsafe_temp {
-                    screen.warn(&abort_warning(t.temperature_c));
+                    screen.notice(&abort_warning(t.temperature_c));
                 }
                 !unsafe_temp
             }

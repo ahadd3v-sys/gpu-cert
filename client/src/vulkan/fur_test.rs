@@ -497,7 +497,7 @@ pub fn run(
     // Announced because it is CPU-bound work with no GPU activity behind it:
     // roughly half a second on a modern laptop, longer on an old desktop,
     // during which nothing else prints and the card sits idle.
-    println!("  (computing reference images on the CPU...)");
+    crate::diag::record("computing reference images on the CPU");
     let references: Vec<(u32, Vec<u32>)> = REFERENCE_SEEDS
         .iter()
         .map(|&seed| (seed, reference_image(seed)))
@@ -544,14 +544,14 @@ pub fn run(
                 reported_example = true;
                 if let Some(i) = actual.iter().zip(expected.iter()).position(|(a, e)| a != e) {
                     let (a, e) = (actual[i], expected[i]);
-                    println!(
-                        "\n  render mismatch: frame {frames_rendered}, {frame_mismatches} of \
+                    crate::diag::record(format!(
+                        "render mismatch: frame {frames_rendered}, {frame_mismatches} of \
                          {PIXEL_COUNT} pixels wrong, first at ({}, {}) actual=0x{a:08x} \
                          expected=0x{e:08x} xor=0x{:08x}",
                         i % COLOR_WIDTH as usize,
                         i / COLOR_WIDTH as usize,
                         a ^ e
-                    );
+                    ));
                 }
             }
 
