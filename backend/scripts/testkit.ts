@@ -13,6 +13,8 @@ const [command, ...args] = process.argv.slice(2);
 const db_url = process.env.DATABASE_URL as string;
 const db = createClient({ url: db_url });
 
+import { MIN_CLIENT_VERSION } from "../lib/client-version.js";
+
 const BASE = process.env.SMOKE_BASE ?? "http://localhost:3111";
 
 async function startSession(fingerprintHash: string) {
@@ -20,7 +22,7 @@ async function startSession(fingerprintHash: string) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      client_version: "0.5.1",
+      client_version: MIN_CLIENT_VERSION,
       device_name: "AMD Radeon RX 6600",
       fingerprint_hash: fingerprintHash,
     }),

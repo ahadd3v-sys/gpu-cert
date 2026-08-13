@@ -11,15 +11,30 @@
 //! A version floor makes the line explicit and moves it to the start of a run
 //! instead of the end, so someone on an old build is told to upgrade before
 //! spending sixteen minutes on a test whose result will be thrown away.
+//!
+//! See MIN_CLIENT_VERSION below for how aggressively it is raised, and why
+//! that answer is different during early access than it will be later.
 
 /// Releases at or above this may open sessions and file certificates.
 ///
-/// Raise this only for a release that changes what the numbers mean. Bug fixes
-/// that leave old results still true should not strand working clients.
-export const MIN_CLIENT_VERSION = "0.5.1";
+/// Policy during early access: **raise this with every release that fixes a
+/// client bug**, and accept that it invalidates older results.
+///
+/// The gentler rule, keep old clients working while their results are still
+/// true, is the right one for a tool with real users. It is the wrong one
+/// here. There are single-digit reports in the database, every release so far
+/// has fixed something that changed what a run means or whether it finishes at
+/// all, and a stale result costs more than a stranded client: a certificate is
+/// a claim about a card, and one produced by a build known to be broken is a
+/// claim nobody should be relying on. Ahad's call, and correct while the
+/// sample is this small.
+///
+/// Revisit when there are enough certificates in circulation that expiring
+/// them is a cost rather than housekeeping.
+export const MIN_CLIENT_VERSION = "0.5.2";
 
 export const UPGRADE_MESSAGE =
-  "This version of gpu-cert is no longer supported because it misreports how much VRAM it tested. " +
+  "This version of gpu-cert is no longer supported: it has a bug that affects what its results mean. " +
   "Download the current release from https://gpucert.com and run the test again.";
 
 /// Compares dotted numeric versions. Returns <0, 0, or >0 like a C comparator.
