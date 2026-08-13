@@ -18,7 +18,29 @@ export interface StressAssessment {
 
 const OVER_TEMP_C = 95;
 const THERMAL_CLIMB_TOLERANCE_C = 2.5;
-const CLOCK_DROP_FAIL_PCT = 20;
+/// Raised from 20, and no longer sufficient on its own. See the check below.
+const CLOCK_DROP_FAIL_PCT = 35;
+
+/// A clock drop only counts against a card if the card was also hot.
+///
+/// 20% with no temperature condition was calibrated against a stress kernel
+/// that turned out not to stress anything: it drew 149 W on a 220 W RTX 3070
+/// and its working set fit in cache. Against the real load that replaced it, a
+/// perfectly healthy card drops much further, because that is what a power
+/// limit is for.
+///
+/// This project's own AMD test card is BIOS-locked to 100 W. Its telemetry
+/// under the old kernel read 100 W average and 100 W peak, flat, which is the
+/// signature of a card pegged at its cap rather than one being worked lightly.
+/// Under a heavier load it will boost high while cold and settle well down, and
+/// the old rule would have called that a power delivery fault on a card that is
+/// behaving exactly as designed.
+///
+/// The distinction that actually carries information: a large clock drop at a
+/// moderate temperature is power-limit behaviour and normal. The same drop with
+/// the card hot is thermal throttling and worth reporting. Requiring both means
+/// a power-capped card can never fail this check on its cap alone.
+const CLOCK_DROP_NEEDS_TEMP_C = 80;
 const CLOCK_INSTABILITY_FAIL_PCT = 8;
 const MIN_SAMPLES_FOR_ANALYSIS = 10;
 
@@ -74,9 +96,9 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
     const earlyAvg = average(earlyClockWindow.map((s) => s.graphics_clock_mhz));
     const lateAvg = average(lateClockWindow.map((s) => s.graphics_clock_mhz));
     clockDropPct = earlyAvg > 0 ? ((earlyAvg - lateAvg) / earlyAvg) * 100 : 0;
-    if (clockDropPct > CLOCK_DROP_FAIL_PCT) {
+    if (clockDropPct > CLOCK_DROP_FAIL_PCT && peakTempC >= CLOCK_DROP_NEEDS_TEMP_C) {
       reasons.push(
-        `GPU core clock dropped ${clockDropPct.toFixed(0)}% under sustained load, beyond typical power-limit throttling. This indicates thermal or power delivery issues.`
+        `GPU core clock dropped ${clockDropPct.toFixed(0)}% under sustained load while reaching ${peakTempC}\u00b0C. A drop that large together with that temperature is thermal throttling rather than normal power-limit behaviour, and points at cooling or power delivery.`
       );
     }
   }
@@ -89,9 +111,25 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
   if (steadyState.length > 1) {
     const clocks = steadyState.map((s) => s.graphics_clock_mhz);
     const mean = average(clocks);
-    const variance = average(clocks.map((c) => (c - mean) ** 2));
-    const stdDev = Math.sqrt(variance);
-    clockStabilityPct = mean > 0 ? (stdDev / mean) * 100 : 0;
+
+    // Sample-to-sample movement, not spread about the mean.
+    //
+    // Standard deviation cannot tell a smoothly declining clock from a jittery
+    // one: a card sliding steadily from 2650 to 1400 under its power cap has a
+    // large deviation about its mean and no instability at all, and the old
+    // metric called that a power delivery fault. Since the comment above always
+    // said "jumping around, rather than smoothly declining", the metric was
+    // simply not measuring what it claimed to.
+    //
+    // Averaging the absolute step between consecutive samples separates them.
+    // A monotonic decline moves a fraction of a percent per sample however
+    // steep it is overall; a clock oscillating between two states moves the
+    // full gap every time.
+    const steps: number[] = [];
+    for (let i = 1; i < clocks.length; i++) {
+      steps.push(Math.abs(clocks[i] - clocks[i - 1]));
+    }
+    clockStabilityPct = mean > 0 ? (average(steps) / mean) * 100 : 0;
     if (clockStabilityPct > CLOCK_INSTABILITY_FAIL_PCT) {
       reasons.push(
         `GPU clock speed was unstable during the test (±${clockStabilityPct.toFixed(1)}% variation), consistent with a power delivery issue.`
