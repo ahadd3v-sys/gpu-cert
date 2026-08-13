@@ -87,6 +87,30 @@ const HOME_CSS = `
     .protocol-block-wide { grid-column: auto; }
   }
 
+  /* The closing section used to be one paragraph capped at 54ch, which left
+     the right half of the sheet empty once the page widened. The answer isn't
+     a longer line — past about 75 characters prose gets hard to track — it's
+     giving the row something to hold. The four fields were already named in
+     that paragraph, so they move out of the prose and into a panel shaped like
+     the certificate's own specification rows, which is what they actually are. */
+  .closing { display: grid; gap: 26px; align-items: start; }
+  .closing .statement { max-width: none; }
+  @media (min-width: 1000px) {
+    .closing { grid-template-columns: minmax(0, 1fr) 320px; gap: 56px; }
+  }
+
+  .bound-card { border: 1px solid var(--paper-deep); padding: 18px 20px 16px; }
+  .bound-title { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-muted); margin: 0 0 4px; }
+  ul.bound-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+  }
+  ul.bound-list li { padding: 8px 0; border-top: 1px solid var(--paper-deep); }
+  .bound-note { font-size: 12px; color: var(--ink-muted); line-height: 1.55; margin: 12px 0 0; }
+
   @media (max-width: 560px) {
     .protocol-grid { grid-template-columns: 1fr; gap: 22px; }
   }
@@ -149,7 +173,22 @@ export function renderHome(loggedIn: boolean): string {
 
     <section>
       <p class="section-label">Why a buyer should believe it</p>
-      <p class="statement" style="margin-bottom: 0;">The certificate is signed with GPU Cert's key, not generated in your browser, and it names the card it was issued to: GPU UUID, PCI device ID, VBIOS version, VRAM size. Move the certificate to a different card and the fingerprint stops matching. There are plenty of good diagnostic tools already, and none of them produce something a stranger can verify.</p>
+      <div class="closing">
+        <div>
+          <p class="statement">The certificate is signed with GPU Cert's key when it is issued, not generated in the browser showing it to you. Anyone can re-check that signature against the <a href="/.well-known/gpu-cert-key.pem">published key</a>, or on the <a href="/verify">verification page</a>.</p>
+          <p class="statement" style="margin-bottom: 0;">There are plenty of good diagnostic tools already. None of them produce something a stranger can check.</p>
+        </div>
+        <aside class="bound-card">
+          <p class="bound-title">Bound to one card</p>
+          <ul class="bound-list">
+            <li>GPU UUID</li>
+            <li>PCI device ID</li>
+            <li>VBIOS version</li>
+            <li>VRAM size</li>
+          </ul>
+          <p class="bound-note">Hashed together into the fingerprint printed on the certificate. Show it against a different card and it stops matching.</p>
+        </aside>
+      </div>
     </section>`,
   });
 }
