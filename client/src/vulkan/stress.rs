@@ -93,9 +93,7 @@ pub fn run(
     let data_buffer =
         GpuBuffer::device_local(ctx, buffer_size, vk::BufferUsageFlags::STORAGE_BUFFER)?;
 
-    let stream_bytes = stream_buffer_bytes(ctx);
-    let stream_buffer =
-        GpuBuffer::device_local(ctx, stream_bytes, vk::BufferUsageFlags::STORAGE_BUFFER)?;
+    let (stream_buffer, stream_bytes) = allocate_stream(ctx)?;
     crate::diag::record(format!(
         "stress: {} MB compute buffer, {} MB streaming buffer, {BLOCKS_PER_DISPATCH} blocks/dispatch",
         buffer_size / 1_048_576,
@@ -144,6 +142,43 @@ pub fn run(
     result?;
 
     Ok(StressRunResult { dispatch_count, aborted_for_safety })
+}
+
+/// Takes the largest streaming buffer the card will actually give, halving on
+/// refusal rather than failing the run.
+///
+/// The size below is an estimate, and on a driver without VK_EXT_memory_budget
+/// it is an estimate against the total heap rather than free memory, because
+/// that is all there is to go on. So it can ask for more than the card can
+/// spare, and until this existed that refusal killed the whole run before a
+/// single test had executed. The stress test needed 4 MiB before v0.6.0 and
+/// now wants up to 512 MiB, so the failure mode is new and entirely
+/// self-inflicted.
+///
+/// A smaller stream is a weaker load, not a wrong one, which is exactly the
+/// trade to make here: a run that tests the card slightly less hard beats no
+/// run at all. If even the floor is refused, that is a real problem and the
+/// error stands.
+fn allocate_stream(ctx: &VulkanContext) -> anyhow::Result<(GpuBuffer, u64)> {
+    let mut size = stream_buffer_bytes(ctx);
+    loop {
+        match GpuBuffer::device_local(ctx, size, vk::BufferUsageFlags::STORAGE_BUFFER) {
+            Ok(buffer) => return Ok((buffer, size)),
+            Err(e) if size > STREAM_MIN_BYTES => {
+                crate::diag::record(format!(
+                    "stress: {} MB streaming buffer refused ({e}), halving",
+                    size / 1_048_576
+                ));
+                size /= 2;
+            }
+            Err(e) => {
+                return Err(e.context(format!(
+                    "could not allocate even a {} MB streaming buffer for the stress test",
+                    STREAM_MIN_BYTES / 1_048_576
+                )))
+            }
+        }
+    }
 }
 
 /// Largest power-of-two streaming buffer this card can comfortably spare.
@@ -196,6 +231,21 @@ mod tests {
             assert!(rounded.is_power_of_two(), "{ceiling} rounded to {rounded}");
             assert!(rounded <= ceiling, "{rounded} exceeds its ceiling {ceiling}");
         }
+    }
+
+    /// Halving must terminate at the floor rather than running to zero, which
+    /// would make the mask 0xFFFFFFFF and send every access out of bounds.
+    #[test]
+    fn halving_stops_at_the_floor() {
+        let mut size = super::STREAM_TARGET_BYTES;
+        let mut steps = 0;
+        while size > super::STREAM_MIN_BYTES {
+            size /= 2;
+            steps += 1;
+            assert!(steps < 64, "halving did not converge");
+        }
+        assert_eq!(size, super::STREAM_MIN_BYTES);
+        assert!(size.is_power_of_two());
     }
 
     /// A card with almost nothing free must still get a usable buffer rather
