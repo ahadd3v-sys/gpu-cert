@@ -23,6 +23,7 @@ import {
   getTestSession,
   recordSessionProgress,
   recordSessionFailure,
+  recordSessionRejection,
   consumeTestSession,
   countRecentSessions,
   createFeedback,
@@ -315,6 +316,9 @@ app.post("/api/certify", async (c) => {
     // Logged in full, answered in one line. Handing back the list of failed
     // checks would just be instructions for producing a payload that passes.
     console.warn("rejected report", { problems: attestation.problems });
+    // Stored as well as logged, because a platform log is gone by the time
+    // anyone asks what happened.
+    await recordSessionRejection(req.attestation.session_id, attestation.problems);
     return c.json({ error: "this report could not be attested to a real test run" }, 403);
   }
 

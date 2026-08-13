@@ -79,6 +79,13 @@ check "a session can be opened" "$([ -n "$SID" ] && echo 1 || echo 0)"
 # This is the check that costs a forger real time.
 check "a fresh session can't claim 16 minutes of testing" \
   "$([ "$(post_report "$(report "$SID" "$NONCE")")" = "403" ] && echo 1 || echo 0)"
+# The client is told nothing useful on purpose, so the reason has to survive
+# somewhere. Without this it lived only in a platform log that had rotated by
+# the time a real rejection needed explaining.
+check "the reason a report was refused is recorded against the session" \
+  "$(kit session-field "$SID" rejection | grep -qi "session was only open" && echo 1 || echo 0)"
+check "the refusal itself still tells the client nothing useful" \
+  "$(curl -s -X POST http://localhost:3111/api/certify -H 'content-type: application/json' -d "$(report "$SID" "$NONCE")" | grep -qi "wall\|heartbeat\|fingerprint" && echo 0 || echo 1)"
 
 # Same session, moved back in time, with heartbeats recorded.
 kit backdate "$SID" 1000 9 >/dev/null

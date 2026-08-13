@@ -178,6 +178,16 @@ const MIGRATIONS = [
   `ALTER TABLE test_sessions ADD COLUMN run_log TEXT`,
   `ALTER TABLE test_sessions ADD COLUMN failed_at TEXT`,
   `ALTER TABLE test_sessions ADD COLUMN failure TEXT`,
+  // Why a submission was refused, kept server-side only.
+  //
+  // The refusal itself is deliberately vague to the client, because handing a
+  // forger the list of checks they failed is handing them the instructions.
+  // But that left the reasons in an ephemeral platform log, so when an RTX
+  // 3060 Ti's finished run was rejected there was no way to find out which
+  // check had fired: exactly the situation diag.rs exists to prevent on the
+  // client, reproduced on the server.
+  `ALTER TABLE test_sessions ADD COLUMN rejected_at TEXT`,
+  `ALTER TABLE test_sessions ADD COLUMN rejection TEXT`,
 ];
 
 // Order matters, and getting it wrong takes the whole site down rather than
@@ -500,6 +510,19 @@ export async function recordSessionProgress(
 /// Records why a run died. The one thing a crashed run can still do, and the
 /// difference between a bug that gets fixed and one that is only ever
 /// described second-hand as "it got stuck".
+/// Records why a submission was refused, against the session it was refused
+/// for. Never returned to the client; see the migration for why.
+export async function recordSessionRejection(
+  id: string,
+  problems: string[]
+): Promise<void> {
+  await ensureSchema();
+  await db().execute({
+    sql: `UPDATE test_sessions SET rejected_at = ?, rejection = substr(?, 1, 4000) WHERE id = ?`,
+    args: [new Date().toISOString(), problems.join(" | "), id],
+  });
+}
+
 export async function recordSessionFailure(
   id: string,
   nonce: string,
