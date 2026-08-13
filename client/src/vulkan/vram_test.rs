@@ -23,6 +23,7 @@ struct PushConstants {
     mode: u32,
     seed: u32,
     length: u32,
+    offset: u32,
 }
 
 pub struct VramTestResult {
@@ -83,7 +84,35 @@ pub fn run(
         std::mem::size_of::<PushConstants>() as u32,
     )?;
 
-    let workgroups = element_count.div_ceil(WORKGROUP_SIZE);
+    // A buffer this large needs more workgroups than a single vkCmdDispatch
+    // can safely request. Confirmed on real hardware (RX 6600): exceeding
+    // VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0] in one dispatch
+    // call isn't a clean error or an honest clamp — it silently executes
+    // something other than the requested work (the corrupted-looking
+    // results this whole diagnostic detour was chasing turned out to be
+    // this, not a shader logic bug). Chunk every fill/verify dispatch into
+    // calls that each stay within the real limit, using `offset` so each
+    // chunk's shader invocations compute the correct absolute index.
+    if ctx.max_compute_workgroups_x == 0 {
+        anyhow::bail!("driver reports maxComputeWorkGroupCount[0] = 0 — can't dispatch anything");
+    }
+    let max_elements_per_dispatch = ctx.max_compute_workgroups_x.saturating_mul(WORKGROUP_SIZE);
+    println!(
+        "  (VRAM test: {} chunk(s) per pass, driver's max dispatch is {} workgroups)",
+        element_count.div_ceil(max_elements_per_dispatch.max(1)),
+        ctx.max_compute_workgroups_x
+    );
+    let dispatch_chunks: Vec<(u32, u32)> = {
+        let mut chunks = Vec::new();
+        let mut offset = 0u32;
+        while offset < element_count {
+            let chunk_len = (element_count - offset).min(max_elements_per_dispatch);
+            chunks.push((offset, chunk_len));
+            offset += chunk_len;
+        }
+        chunks
+    };
+
     let started = Instant::now();
     let mut passes_run = 0u32;
     let mut total_errors = 0u64;
@@ -96,21 +125,25 @@ pub fn run(
             reset_error_counter(ctx, &error_buffer)?;
             reset_first_mismatch(ctx, &first_mismatch_buffer)?;
 
-            let fill_push = PushConstants { mode: MODE_FILL, seed, length: element_count };
-            kernel.dispatch(
-                ctx,
-                &[&data_buffer, &error_buffer, &first_mismatch_buffer],
-                as_bytes(&fill_push),
-                workgroups,
-            )?;
+            for &(offset, chunk_len) in &dispatch_chunks {
+                let fill_push = PushConstants { mode: MODE_FILL, seed, length: element_count, offset };
+                kernel.dispatch(
+                    ctx,
+                    &[&data_buffer, &error_buffer, &first_mismatch_buffer],
+                    as_bytes(&fill_push),
+                    chunk_len.div_ceil(WORKGROUP_SIZE),
+                )?;
+            }
 
-            let verify_push = PushConstants { mode: MODE_VERIFY, seed, length: element_count };
-            kernel.dispatch(
-                ctx,
-                &[&data_buffer, &error_buffer, &first_mismatch_buffer],
-                as_bytes(&verify_push),
-                workgroups,
-            )?;
+            for &(offset, chunk_len) in &dispatch_chunks {
+                let verify_push = PushConstants { mode: MODE_VERIFY, seed, length: element_count, offset };
+                kernel.dispatch(
+                    ctx,
+                    &[&data_buffer, &error_buffer, &first_mismatch_buffer],
+                    as_bytes(&verify_push),
+                    chunk_len.div_ceil(WORKGROUP_SIZE),
+                )?;
+            }
 
             let pass_errors = read_error_counter(ctx, &error_buffer)?;
             total_errors += pass_errors as u64;

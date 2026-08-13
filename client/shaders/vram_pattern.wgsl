@@ -22,6 +22,11 @@ struct PushConstants {
     mode: u32,   // 0 = fill, 1 = verify
     seed: u32,   // varies per test pass so repeated runs don't alias
     length: u32,
+    // Element index this dispatch call starts at. A buffer this large needs
+    // more workgroups than a single vkCmdDispatch can safely request (see
+    // vram_test.rs), so the host issues several dispatches, each covering a
+    // slice of the buffer starting at `offset`.
+    offset: u32,
 }
 
 const MODE_FILL: u32 = 0u;
@@ -57,7 +62,7 @@ fn expected_pattern(idx: u32) -> u32 {
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
+    let idx = global_id.x + pc.offset;
     if (idx >= pc.length) {
         return;
     }

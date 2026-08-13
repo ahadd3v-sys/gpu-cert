@@ -14,6 +14,15 @@ pub struct VulkanContext {
     pub device_local_memory_type: u32,
     pub host_visible_memory_type: u32,
     pub device_name: String,
+    /// VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0] — the real cap on
+    /// a single vkCmdDispatch's X-dimension group count. Confirmed on real
+    /// hardware (an RX 6600) that exceeding this doesn't produce a
+    /// validation error or a clean clamp: the driver silently executes
+    /// something other than the requested count (observed: dispatching
+    /// ~7.1M groups when the real limit was ~4.2M corrupted results, not
+    /// just truncated them safely). Large single-dispatch compute kernels
+    /// must chunk against this rather than assume it's unbounded.
+    pub max_compute_workgroups_x: u32,
 }
 
 impl VulkanContext {
@@ -44,6 +53,7 @@ impl VulkanContext {
             let device_name = CStr::from_ptr(props.device_name.as_ptr())
                 .to_string_lossy()
                 .into_owned();
+            let max_compute_workgroups_x = props.limits.max_compute_work_group_count[0];
 
             // GRAPHICS, not just COMPUTE: the fur render test (graphics
             // pipeline correctness/display-output check) needs a
@@ -93,6 +103,7 @@ impl VulkanContext {
                 device_local_memory_type,
                 host_visible_memory_type,
                 device_name,
+                max_compute_workgroups_x,
             })
         }
     }
