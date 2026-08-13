@@ -60,9 +60,11 @@ fn load_gpu_backend() -> anyhow::Result<GpuBackend> {
     }
 }
 
-// Phase 1 durations. Not tunable via CLI yet — exposing knobs like this to
-// end users (vs. keeping the test fixed-length for report comparability) is
-// a product decision, not a stack one; deferred until Ahad weighs in.
+// Phase 1 durations. Not tunable via CLI for end users (vs. keeping the
+// test fixed-length for report comparability) — that's a product decision,
+// not a stack one, deferred until Ahad weighs in. `--fast` below is a
+// developer-only escape hatch for iterating on the client itself, not a
+// public option; the website's download always runs the real durations.
 const STRESS_TEST_DURATION: Duration = Duration::from_secs(5 * 60);
 const VRAM_TEST_DURATION: Duration = Duration::from_secs(10 * 60);
 const VRAM_TEST_FRACTION: f64 = 0.85;
@@ -70,6 +72,16 @@ const VRAM_TEST_FRACTION: f64 = 0.85;
 // check exercised under load, not a thermal soak — that's already covered
 // by the 5-minute compute stress test above.
 const FUR_TEST_DURATION: Duration = Duration::from_secs(45);
+
+// Undocumented, developer-only: `gpu-cert.exe --fast` runs all three tests
+// at durations short enough for a tight edit-rebuild-rerun loop while
+// debugging the client itself — long enough to still exercise multiple VRAM
+// passes and a real stress-telemetry series, short enough not to burn 16
+// minutes per iteration. Never advertised, never what the website's
+// download runs — a certificate produced this way isn't a real one.
+const FAST_STRESS_TEST_DURATION: Duration = Duration::from_secs(20);
+const FAST_VRAM_TEST_DURATION: Duration = Duration::from_secs(20);
+const FAST_FUR_TEST_DURATION: Duration = Duration::from_secs(10);
 
 // Console, not a GUI: the trust problem a GUI was meant to solve is now
 // handled upstream — you only get this exe by clicking "Test your GPU" on
@@ -117,6 +129,14 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let fast = std::env::args().any(|a| a == "--fast");
+    let (stress_duration, vram_duration, fur_duration) = if fast {
+        println!("(--fast: running short debug-length tests, not a real certificate)");
+        (FAST_STRESS_TEST_DURATION, FAST_VRAM_TEST_DURATION, FAST_FUR_TEST_DURATION)
+    } else {
+        (STRESS_TEST_DURATION, VRAM_TEST_DURATION, FUR_TEST_DURATION)
+    };
+
     let gpu = load_gpu_backend()?;
     let telemetry = gpu.read_primary_gpu()?;
     println!("Detected GPU: {} (VRAM: {} MB)", telemetry.name, telemetry.vram_total_bytes / 1_048_576);
@@ -133,10 +153,10 @@ fn run() -> anyhow::Result<()> {
     // by default — the opposite of what the user chose.
     let upload_key = account::prompt_for_key();
 
-    println!("Running stress test ({} min)...", STRESS_TEST_DURATION.as_secs() / 60);
+    println!("Running stress test ({}s)...", stress_duration.as_secs());
     let mut telemetry_series = Vec::new();
     let stress_started = Instant::now();
-    let stress_run = vulkan::stress::run(&ctx, STRESS_TEST_DURATION, |elapsed| {
+    let stress_run = vulkan::stress::run(&ctx, stress_duration, |elapsed| {
         // Re-sampling telemetry every tick is deliberately cheap (a few
         // NVML calls) relative to the dispatch itself, so it doesn't skew
         // the load being measured.
@@ -169,12 +189,12 @@ fn run() -> anyhow::Result<()> {
         report::build_stress_report(telemetry_series, &stress_run, stress_started.elapsed());
     println!("Stress test complete: {} dispatches", stress_report.dispatch_count);
 
-    println!("Running VRAM pattern test ({} min)...", VRAM_TEST_DURATION.as_secs() / 60);
+    println!("Running VRAM pattern test ({}s)...", vram_duration.as_secs());
     let vram_result = vulkan::vram_test::run(
         &ctx,
         telemetry.vram_total_bytes,
         VRAM_TEST_FRACTION,
-        VRAM_TEST_DURATION,
+        vram_duration,
         |passes_run, total_errors, elapsed| {
             print_progress(&format!(
                 "  pass {:>3}   errors {:>3}   {:>3}s",
@@ -203,8 +223,8 @@ fn run() -> anyhow::Result<()> {
         vram_report.bytes_tested / 1_048_576
     );
 
-    println!("Running render integrity test ({}s)...", FUR_TEST_DURATION.as_secs());
-    let fur_result = vulkan::fur_test::run(&ctx, FUR_TEST_DURATION, |elapsed| {
+    println!("Running render integrity test ({}s)...", fur_duration.as_secs());
+    let fur_result = vulkan::fur_test::run(&ctx, fur_duration, |elapsed| {
         print_progress(&format!("  {:>3}s", elapsed.as_secs()));
         match gpu.read_primary_gpu() {
             Ok(t) => {
