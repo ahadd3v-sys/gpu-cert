@@ -124,11 +124,25 @@ CREATE TABLE IF NOT EXISTS report_views (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+`;
+
+let initialized = false;
+
+// CREATE TABLE IF NOT EXISTS won't add a column to a table that already
+// exists, so anything added to SCHEMA after a DB has been created needs a
+// matching ALTER here. Each runs inside its own try: "duplicate column name"
+// is the expected outcome on an already-migrated DB, not a failure.
+const INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_reports_fingerprint_hash ON reports (fingerprint_hash);
+
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports (user_id);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_ip ON test_sessions (ip_hash, started_at);
+
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback (created_at);
+
 CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens (user_id, kind);
+
 CREATE INDEX IF NOT EXISTS idx_report_views_report ON report_views (report_id, created_at);
 
 -- Enforces upload_key uniqueness on DBs where the column arrived via ALTER
@@ -143,12 +157,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_upload_key ON users (upload_key);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users (username);
 `;
 
-let initialized = false;
-
-// CREATE TABLE IF NOT EXISTS won't add a column to a table that already
-// exists, so anything added to SCHEMA after a DB has been created needs a
-// matching ALTER here. Each runs inside its own try: "duplicate column name"
-// is the expected outcome on an already-migrated DB, not a failure.
 const MIGRATIONS = [
   `ALTER TABLE users ADD COLUMN upload_key TEXT`,
   // Existing accounts predate verification. They are marked verified rather
@@ -158,19 +166,41 @@ const MIGRATIONS = [
   `ALTER TABLE users ADD COLUMN username TEXT`,
 ];
 
+// Order matters, and getting it wrong takes the whole site down rather than
+// failing quietly. Tables, then column migrations, then indexes.
+//
+// The reason is that CREATE TABLE IF NOT EXISTS is a no-op against a database
+// that already has the table, so a newly added column only arrives via its
+// ALTER. An index over that column therefore cannot be created until the ALTER
+// has run. Creating indexes in the same pass as the tables meant that on any
+// existing database the index referenced a column that did not exist yet,
+// which threw, which failed ensureSchema, which 500'd every route that touches
+// the database. Exactly that shipped with the username column.
+function statementsIn(sql: string): string[] {
+  return sql
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export async function ensureSchema() {
   if (initialized) return;
-  const statements = SCHEMA.split(";").map((s) => s.trim()).filter(Boolean);
-  for (const stmt of statements) {
+
+  for (const stmt of statementsIn(SCHEMA)) {
     await db().execute(stmt);
   }
   for (const stmt of MIGRATIONS) {
     try {
       await db().execute(stmt);
     } catch {
-      // column already exists
+      // "duplicate column name" is the expected outcome on an already-migrated
+      // database, not a failure.
     }
   }
+  for (const stmt of statementsIn(INDEXES)) {
+    await db().execute(stmt);
+  }
+
   initialized = true;
 }
 
