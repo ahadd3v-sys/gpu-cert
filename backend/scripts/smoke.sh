@@ -139,6 +139,16 @@ check "early access is stated up front" "$(has "$(curl -s http://localhost:3111/
 # document to read as settled.
 check "the certificate says nothing about beta" "$(curl -s "http://localhost:3111/r/$PASS_ID" | grep -qi "early access\|beta" && echo 0 || echo 1)"
 check "login renders" "$(has "$(curl -s http://localhost:3111/login)" "Log in")"
+# The site name is appended to every title so a truncated tab is still
+# identifiable, which on the home page used to read "GPU Cert, GPU Cert".
+check "the home tab is not named twice" \
+  "$(has "$(curl -s http://localhost:3111/)" "<title>GPU Cert</title>")"
+check "an inner page is named before the site" \
+  "$(has "$(curl -s http://localhost:3111/verify)" "<title>Verify a certificate, GPU Cert</title>")"
+# FAIL_ID, not PASS_ID: the latter has had its device name tampered by then to
+# prove signature checking works, so its title no longer matches the card.
+check "a certificate is named by its card" \
+  "$(has "$(curl -s "http://localhost:3111/r/$FAIL_ID")" "<title>AMD Radeon RX 6600, GPU Cert</title>")"
 # A recovery flow nobody can find is the same as not having one.
 check "login links to password reset" "$(has "$(curl -s http://localhost:3111/login)" 'href="/forgot-password"')"
 check "badge renders as png" "$(curl -s -o /dev/null -w '%{content_type}' "http://localhost:3111/r/$FAIL_ID/badge" | grep -q image && echo 1 || echo 0)"

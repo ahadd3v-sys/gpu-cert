@@ -233,13 +233,23 @@ interface PageOpts {
 // Prose is kept readable independently by `.statement`'s own max-width in ch,
 // so the extra width goes to the tabular and multi-column sections that can
 // actually use it instead of stretching line lengths.
+export const SITE_NAME = "GPU Cert";
+
+/// Every page ends with the site name so a tab is identifiable when the title
+/// is truncated to a few characters. The home page's own title is the site
+/// name, though, and blindly appending gave it "GPU Cert, GPU Cert".
+export function pageTitle(title: string): string {
+  const trimmed = title.trim();
+  return trimmed === "" || trimmed === SITE_NAME ? SITE_NAME : `${trimmed}, ${SITE_NAME}`;
+}
+
 export function sitePage({ title, nav = "", css = "", width = 1100, body }: PageOpts): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)}, GPU Cert</title>
+<title>${esc(pageTitle(title))}</title>
 ${FAVICON_LINK}
 <style>${SITE_CSS}
   main.page { max-width: ${width}px; margin: 0 auto; padding: 48px 20px 24px; }

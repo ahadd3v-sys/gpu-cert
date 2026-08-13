@@ -1,6 +1,6 @@
 import type { ReportRow } from "../lib/db.js";
 import { esc } from "./html.js";
-import { FONT_FACE_CSS, TOKENS_CSS, FAVICON_LINK, renderEmblem } from "./theme.js";
+import { FONT_FACE_CSS, TOKENS_CSS, FAVICON_LINK, renderEmblem, pageTitle } from "./theme.js";
 
 // Hand-written HTML string, not JSX. This is a single static-shaped page
 // with no interactivity beyond the claim form, and skipping JSX means
@@ -143,7 +143,7 @@ export function renderReportPage(report: ReportRow, viewer: CertificateViewer): 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(report.device_name)}, GPU Cert</title>
+<title>${esc(pageTitle(report.device_name))}</title>
 ${FAVICON_LINK}
 <style>
   ${FONT_FACE_CSS}
