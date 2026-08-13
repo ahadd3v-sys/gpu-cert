@@ -223,6 +223,9 @@ function authPage(opts: {
   next: string | null;
   error: string | null;
   minLength?: number;
+  withUsername?: boolean;
+  /// Login takes either, so the field cannot be typed as an email.
+  identifierLabel?: string;
   altLine: string;
 }): string {
   const nextField = opts.next ? `<input type="hidden" name="next" value="${esc(opts.next)}">` : "";
@@ -241,9 +244,18 @@ function authPage(opts: {
     <form method="post" action="${esc(opts.action)}">
       ${nextField}
       <div class="field">
-        <label for="email">Email</label>
-        <input id="email" type="email" name="email" autocomplete="email" required>
+        <label for="email">${esc(opts.identifierLabel ?? "Email")}</label>
+        <input id="email" type="${opts.identifierLabel ? "text" : "email"}" name="email" autocomplete="${opts.identifierLabel ? "username" : "email"}" required>
       </div>
+      ${
+        opts.withUsername
+          ? `<div class="field">
+               <label for="username">Username</label>
+               <input id="username" name="username" minlength="3" maxlength="20" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{1,18}[a-zA-Z0-9]" autocomplete="username" required>
+               <p class="field-hint">3 to 20 characters. Letters, numbers, hyphens and underscores.</p>
+             </div>`
+          : ""
+      }
       <div class="field">
         <label for="password">Password</label>
         <input id="password" type="password" name="password"${minAttr} autocomplete="current-password" required>
@@ -264,6 +276,7 @@ export function renderLogin(next: string | null, error: string | null): string {
     intro: "Log in to see every certificate you have filed and to get the key that connects the app to this account.",
     action: "/login",
     submitLabel: "Log in",
+    identifierLabel: "Email or username",
     next,
     error,
     altLine: `No account yet? <a href="/signup${q}">Create one</a>.`,
@@ -278,6 +291,7 @@ export function renderSignup(next: string | null, error: string | null): string 
     intro: "An account collects your certificates, and gives you a key so the app files future runs under your name automatically.",
     action: "/signup",
     submitLabel: "Create account",
+    withUsername: true,
     next,
     error,
     minLength: 8,
@@ -364,9 +378,14 @@ export interface DashboardEmailState {
   canResend: boolean;
 }
 
+export interface AccountIdentity {
+  email: string;
+  username: string;
+}
+
 export function renderDashboard(
   reports: ReportRow[],
-  email: string,
+  account: AccountIdentity,
   uploadKey: string,
   viewStats: Map<string, ViewStats>,
   referrers: Array<{ host: string; views: number }>,
@@ -415,10 +434,10 @@ export function renderDashboard(
   const verifyBanner = emailState.emailVerified
     ? ""
     : emailState.verificationSent
-      ? `<p class="notice-info">Confirmation sent to ${esc(email)}. Check your inbox, and your spam folder.</p>`
+      ? `<p class="notice-info">Confirmation sent to ${esc(account.email)}. Check your inbox, and your spam folder.</p>`
       : emailState.canResend
         ? `<div class="notice-info">
-             <span>Your email is not confirmed yet, so you could not reset your password if you forgot it.</span>
+             <span>Your email is not confirmed yet, so you cannot save certificates to this account and could not reset your password.</span>
              <form method="post" action="/resend-verification"><button type="submit" class="btn btn-quiet">Send the link again</button></form>
            </div>`
         : "";
@@ -481,8 +500,8 @@ export function renderDashboard(
     <div class="dash-head">
       <div>
         <p class="eyebrow">Register of issued certificates</p>
-        <h1 class="display" style="font-size: 27px; margin-bottom: 6px;">${esc(email)}</h1>
-        <p class="footer-note">${reports.length} ${reports.length === 1 ? "certificate" : "certificates"} filed to this account.</p>
+        <h1 class="display" style="font-size: 27px; margin-bottom: 2px;">${esc(account.username)}</h1>
+        <p class="footer-note">${esc(account.email)} &middot; ${reports.length} ${reports.length === 1 ? "certificate" : "certificates"} filed to this account.</p>
       </div>
       ${reports.length ? `<a class="btn" href="${DOWNLOAD_URL}">Test another card</a>` : ""}
     </div>

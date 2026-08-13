@@ -11,6 +11,11 @@ import {
   claimReport,
   createUser,
   getUserByEmail,
+  getUserByUsername,
+  getUserByEmailOrUsername,
+  normalizeUsername,
+  usernameProblem,
+  ensureUsername,
   getUserById,
   getUserByUploadKey,
   createTestSession,
@@ -210,7 +215,12 @@ app.post("/api/certify", async (c) => {
   }
 
   const bearer = c.req.header("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
-  const keyOwner = bearer ? await getUserByUploadKey(bearer) : null;
+  const keyHolder = bearer ? await getUserByUploadKey(bearer) : null;
+  // Gating the claim button but not the upload key would leave the gate wide
+  // open: an unverified account could simply attribute at ingest instead. An
+  // unverified holder is treated exactly like an unrecognized key, so the run
+  // is still stored and still public, just unattached.
+  const keyOwner = keyHolder && keyHolder.email_verified === 1 ? keyHolder : null;
 
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -272,7 +282,10 @@ app.post("/api/certify", async (c) => {
     // Lets the exe print "filed to <account>" vs. "not attached to an
     // account" instead of guessing which happened.
     filed_to: keyOwner?.email ?? null,
-    upload_key_recognized: bearer ? keyOwner !== null : null,
+    upload_key_recognized: bearer ? keyHolder !== null : null,
+    // Distinguishes "we do not know this key" from "confirm your email first",
+    // which are very different things to be told after a 16-minute run.
+    upload_key_unverified: bearer ? keyHolder !== null && keyOwner === null : false,
   });
 });
 
@@ -338,7 +351,15 @@ app.get("/r/:reportId", async (c) => {
   if (!report) return c.notFound();
   const viewerUserId = await getSessionUserId(c);
   await trackView(c, report.id, "page", report.user_id);
-  return c.html(renderReportPage(report, viewerUserId !== null));
+  const viewer = viewerUserId ? await getUserById(viewerUserId) : null;
+  return c.html(
+    renderReportPage(report, {
+      loggedIn: viewer !== null,
+      emailVerified: viewer?.email_verified === 1,
+      // Set when a claim was just refused for want of a confirmed address.
+      justBlocked: c.req.query("verify") === "1",
+    })
+  );
 });
 
 app.get("/r/:reportId/badge", async (c) => {
@@ -354,6 +375,16 @@ app.get("/r/:reportId/badge", async (c) => {
 app.post("/r/:reportId/claim", async (c) => {
   const userId = await getSessionUserId(c);
   if (!userId) return c.redirect(`/login?next=/r/${c.req.param("reportId")}`);
+
+  // Attaching a certificate to an account is the one action that makes a
+  // public document say something about a person, so it needs the address
+  // behind that account to be real. Without this, verification is decorative:
+  // anyone could sign up as anyone and start collecting certificates under it.
+  const user = await getUserById(userId);
+  if (!user || user.email_verified !== 1) {
+    return c.redirect(`/r/${c.req.param("reportId")}?verify=1`);
+  }
+
   await claimReport(c.req.param("reportId"), userId);
   return c.redirect(`/r/${c.req.param("reportId")}`);
 });
@@ -492,17 +523,17 @@ app.get("/login", (c) => {
 
 app.post("/login", async (c) => {
   const form = await c.req.parseBody();
-  const email = String(form.email ?? "").trim().toLowerCase();
+  const identifier = String(form.email ?? "").trim().toLowerCase();
   const password = String(form.password ?? "");
   const next = safeNext(form.next);
 
-  const user = await getUserByEmail(email);
+  const user = await getUserByEmailOrUsername(identifier);
   if (!user) {
     burnPasswordVerification(password);
-    return c.html(renderLogin(next, "Wrong email or password"), 401);
+    return c.html(renderLogin(next, "Wrong username or password"), 401);
   }
   if (!verifyPassword(password, user.password_hash)) {
-    return c.html(renderLogin(next, "Wrong email or password"), 401);
+    return c.html(renderLogin(next, "Wrong username or password"), 401);
   }
 
   const token = await createSessionToken(user.id);
@@ -518,8 +549,17 @@ app.get("/signup", (c) => {
 app.post("/signup", async (c) => {
   const form = await c.req.parseBody();
   const email = String(form.email ?? "").trim().toLowerCase();
+  const username = normalizeUsername(String(form.username ?? ""));
   const password = String(form.password ?? "");
   const next = safeNext(form.next);
+
+  const usernameIssue = usernameProblem(username);
+  if (usernameIssue) {
+    return c.html(renderSignup(next, usernameIssue), 400);
+  }
+  if (await getUserByUsername(username)) {
+    return c.html(renderSignup(next, "That username is taken"), 409);
+  }
 
   // The form carries type="email" and required, but a POST doesn't have to
   // come from the form, without this, an empty string is a valid email as
@@ -543,9 +583,11 @@ app.post("/signup", async (c) => {
   // an unverified state nobody can ever leave is just a permanent banner.
   let user;
   try {
-    user = await createUser(email, hashPassword(password), !isEmailConfigured());
+    user = await createUser(email, username, hashPassword(password), !isEmailConfigured());
   } catch {
-    return c.html(renderSignup(next, "An account with that email already exists"), 409);
+    // The UNIQUE indexes on email and username are what actually enforce
+    // uniqueness; the checks above only exist to give a better message.
+    return c.html(renderSignup(next, "That email or username is already taken"), 409);
   }
 
   if (isEmailConfigured()) {
@@ -660,13 +702,17 @@ app.get("/dashboard", async (c) => {
     return c.redirect("/login?next=/dashboard");
   }
 
-  const [reports, uploadKey] = await Promise.all([getReportsForUser(userId), ensureUploadKey(user)]);
+  const [reports, uploadKey, username] = await Promise.all([
+    getReportsForUser(userId),
+    ensureUploadKey(user),
+    ensureUsername(user),
+  ]);
   const [viewStats, referrers] = await Promise.all([
     getViewStats(reports.map((r) => r.id)),
     getReferrerBreakdown(userId),
   ]);
   return c.html(
-    renderDashboard(reports, user.email, uploadKey, viewStats, referrers, {
+    renderDashboard(reports, { email: user.email, username }, uploadKey, viewStats, referrers, {
       emailVerified: user.email_verified === 1,
       verificationSent: c.req.query("sent") === "1",
       canResend: isEmailConfigured(),

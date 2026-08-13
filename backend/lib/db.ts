@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  username TEXT UNIQUE,
   upload_key TEXT UNIQUE,
   email_verified INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -134,6 +135,12 @@ CREATE INDEX IF NOT EXISTS idx_report_views_report ON report_views (report_id, c
 -- (SQLite can't add a UNIQUE column in place). A unique index permits
 -- multiple NULLs, which is what pre-backfill users hold.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_upload_key ON users (upload_key);
+
+-- Same reasoning as the upload_key index: the column arrived via ALTER on
+-- existing databases, where SQLite cannot add a UNIQUE column in place.
+-- Usernames are stored already-lowercased, so a plain unique index is
+-- sufficient to make them case-insensitively unique.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users (username);
 `;
 
 let initialized = false;
@@ -148,6 +155,7 @@ const MIGRATIONS = [
   // than locked out of their own certificates by a feature added after they
   // signed up.
   `ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE users ADD COLUMN username TEXT`,
 ];
 
 export async function ensureSchema() {
@@ -276,13 +284,14 @@ export async function claimReport(reportId: string, userId: string): Promise<boo
 export interface UserRow {
   id: string;
   email: string;
+  username: string | null;
   password_hash: string;
   upload_key: string | null;
   email_verified: number;
   created_at: string;
 }
 
-const USER_COLUMNS = `id, email, password_hash, upload_key, email_verified, created_at`;
+const USER_COLUMNS = `id, email, username, password_hash, upload_key, email_verified, created_at`;
 
 // Read aloud off a dashboard and typed into a console prompt, so the alphabet
 // drops the four glyph pairs that get mistyped that way (I/1, O/0) and the
@@ -300,17 +309,23 @@ export function generateUploadKey(): string {
 /// `verified` is true when there is no way to send a confirmation email, since
 /// marking an account unverified that can never be verified would just be a
 /// permanent banner nobody can dismiss.
-export async function createUser(email: string, passwordHash: string, verified: boolean): Promise<UserRow> {
+export async function createUser(
+  email: string,
+  username: string,
+  passwordHash: string,
+  verified: boolean
+): Promise<UserRow> {
   await ensureSchema();
   const id = crypto.randomUUID();
   const uploadKey = generateUploadKey();
   await db().execute({
-    sql: `INSERT INTO users (id, email, password_hash, upload_key, email_verified) VALUES (?, ?, ?, ?, ?)`,
-    args: [id, email, passwordHash, uploadKey, verified ? 1 : 0],
+    sql: `INSERT INTO users (id, email, username, password_hash, upload_key, email_verified) VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [id, email, username, passwordHash, uploadKey, verified ? 1 : 0],
   });
   return {
     id,
     email,
+    username,
     password_hash: passwordHash,
     upload_key: uploadKey,
     email_verified: verified ? 1 : 0,
@@ -620,4 +635,89 @@ export async function getReferrerBreakdown(
     host: r.host,
     views: Number(r.views),
   }));
+}
+
+// ---------------------------------------------------------------- usernames
+
+/// Deliberately narrow. A username may end up in a URL path (a public page for
+/// a shop, say), in an email, and next to a verdict on a certificate, so the
+/// character set is restricted to what is unambiguous in all three. No dots,
+/// which read as file extensions in a path; no leading or trailing separators.
+const USERNAME_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{1,18}[a-z0-9])$/;
+
+/// Paths the site already uses, plus ones it plausibly will. Handing a user
+/// "verify" or "admin" would mean either breaking their name later or living
+/// with a routing conflict, and both are worse than refusing it now.
+const RESERVED_USERNAMES = new Set([
+  "admin", "administrator", "api", "app", "auth", "badge", "billing", "blog",
+  "cert", "certificate", "certificates", "dashboard", "docs", "feedback",
+  "gpucert", "gpu-cert", "help", "login", "logout", "me", "new", "null",
+  "owner", "pricing", "r", "report", "reports", "root", "s", "settings",
+  "shop", "shops", "signup", "static", "status", "support", "system", "team",
+  "terms", "privacy", "test", "undefined", "user", "users", "verify",
+  "well-known", "www",
+]);
+
+export function normalizeUsername(input: string): string {
+  return input.trim().toLowerCase();
+}
+
+export function usernameProblem(username: string): string | null {
+  if (username.length < 3 || username.length > 20) {
+    return "Username must be between 3 and 20 characters";
+  }
+  if (!USERNAME_PATTERN.test(username)) {
+    return "Usernames can use letters, numbers, hyphens and underscores, and must start and end with a letter or number";
+  }
+  if (RESERVED_USERNAMES.has(username)) {
+    return "That username is reserved";
+  }
+  return null;
+}
+
+export async function getUserByUsername(username: string): Promise<UserRow | null> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT ${USER_COLUMNS} FROM users WHERE username = ?`,
+    args: [normalizeUsername(username)],
+  });
+  return (res.rows[0] as unknown as UserRow) ?? null;
+}
+
+/// Login accepts either, because people remember one or the other and there is
+/// no ambiguity: an email always contains "@", which a username never can.
+export async function getUserByEmailOrUsername(identifier: string): Promise<UserRow | null> {
+  const value = identifier.trim().toLowerCase();
+  return value.includes("@") ? getUserByEmail(value) : getUserByUsername(value);
+}
+
+/// Accounts created before usernames existed have none. Rather than force an
+/// interruption at login, one is derived from the email's local part on first
+/// dashboard view, the same approach ensureUploadKey already takes.
+export async function ensureUsername(user: UserRow): Promise<string> {
+  if (user.username) return user.username;
+
+  const base = normalizeUsername(user.email.split("@")[0] ?? "")
+    .replace(/[^a-z0-9_-]/g, "")
+    .replace(/^[_-]+|[_-]+$/g, "")
+    .slice(0, 16);
+  const seed = usernameProblem(base) === null ? base : "user";
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = attempt === 0 ? seed : `${seed}${attempt + 1}`;
+    if (usernameProblem(candidate) !== null) continue;
+    try {
+      const res = await db().execute({
+        sql: `UPDATE users SET username = ? WHERE id = ? AND username IS NULL`,
+        args: [candidate, user.id],
+      });
+      if (res.rowsAffected > 0) return candidate;
+      // Someone else set one first; re-read rather than overwrite.
+      const fresh = await getUserById(user.id);
+      if (fresh?.username) return fresh.username;
+    } catch {
+      // Unique violation: that name is taken, try the next suffix.
+    }
+  }
+  return user.id.slice(0, 8);
 }

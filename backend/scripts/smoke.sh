@@ -166,8 +166,39 @@ check "badge impressions are counted separately" "$([ "$(kit views "$PASS_ID" ba
 echo ""
 echo "accounts:"
 curl -s -c "$SCRATCH/jar" -o /dev/null -X POST http://localhost:3111/signup \
-  --data-urlencode "email=owner@example.com" --data-urlencode "password=correcthorse1"
+  --data-urlencode "email=owner@example.com" --data-urlencode "username=rx6600seller" --data-urlencode "password=correcthorse1"
 check "signup creates an account" "$([ -n "$(kit user-id owner@example.com)" ] && echo 1 || echo 0)"
+check "the username is stored" "$([ "$(kit username-of owner@example.com)" = "rx6600seller" ] && echo 1 || echo 0)"
+
+signup() {
+  curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3111/signup \
+    --data-urlencode "email=$1" --data-urlencode "username=$2" --data-urlencode "password=correcthorse1"
+}
+check "a reserved username is refused"  "$([ "$(signup a@example.com admin)" = "400" ] && echo 1 || echo 0)"
+check "a too-short username is refused" "$([ "$(signup b@example.com ab)" = "400" ] && echo 1 || echo 0)"
+check "punctuation in a username is refused" "$([ "$(signup c@example.com 'bad.name')" = "400" ] && echo 1 || echo 0)"
+check "a taken username is refused"     "$([ "$(signup d@example.com rx6600seller)" = "409" ] && echo 1 || echo 0)"
+check "usernames are case-insensitive"  "$([ "$(signup e@example.com RX6600Seller)" = "409" ] && echo 1 || echo 0)"
+
+# Login accepts either identifier, since people remember one or the other.
+BYNAME=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3111/login \
+  --data-urlencode "email=rx6600seller" --data-urlencode "password=correcthorse1")
+check "you can log in with the username" "$([ "$BYNAME" = "302" ] && echo 1 || echo 0)"
+
+# An unverified account cannot attach a public certificate to itself.
+curl -s -o /dev/null -X POST http://localhost:3111/signup \
+  --data-urlencode "email=unverified@example.com" --data-urlencode "username=notconfirmed" --data-urlencode "password=correcthorse1"
+kit set-verified unverified@example.com 0 >/dev/null
+curl -s -c "$SCRATCH/unv" -o /dev/null -X POST http://localhost:3111/login \
+  --data-urlencode "email=unverified@example.com" --data-urlencode "password=correcthorse1"
+curl -s -b "$SCRATCH/unv" -o /dev/null -X POST "http://localhost:3111/r/$PASS_ID/claim"
+check "an unverified account cannot claim a certificate" "$([ "$(kit owner-of "$PASS_ID")" = "none" ] && echo 1 || echo 0)"
+check "the certificate page says why" \
+  "$(has "$(curl -s -b "$SCRATCH/unv" "http://localhost:3111/r/$PASS_ID")" "Confirm your email address")"
+
+kit set-verified unverified@example.com 1 >/dev/null
+curl -s -b "$SCRATCH/unv" -o /dev/null -X POST "http://localhost:3111/r/$PASS_ID/claim"
+check "a verified account can claim it" "$([ "$(kit owner-of "$PASS_ID")" != "none" ] && echo 1 || echo 0)"
 # No provider is configured in the smoke run, so an account that could never be
 # verified is created verified rather than nagged forever.
 check "unverifiable accounts aren't left unverified" "$([ "$(kit verified owner@example.com)" = "1" ] && echo 1 || echo 0)"
@@ -198,7 +229,7 @@ LOGIN=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3111/log
   --data-urlencode "email=owner@example.com" --data-urlencode "password=brandnewpass9")
 check "the new password works" "$([ "$LOGIN" = "302" ] && echo 1 || echo 0)"
 OLD=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3111/login \
-  --data-urlencode "email=owner@example.com" --data-urlencode "password=correcthorse1")
+  --data-urlencode "email=owner@example.com" --data-urlencode "username=rx6600seller" --data-urlencode "password=correcthorse1")
 check "the old password stops working" "$([ "$OLD" = "401" ] && echo 1 || echo 0)"
 # A seller refreshing their own certificate is not a buyer looking at it.
 curl -s -c "$SCRATCH/owner" -o /dev/null -X POST http://localhost:3111/login \

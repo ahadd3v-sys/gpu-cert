@@ -78,7 +78,7 @@ shot() {
 # renders standalone.
 JAR="$SCRATCH/cookies"
 curl -s -c "$JAR" -b "$JAR" -X POST http://localhost:3112/signup \
-  --data-urlencode "email=shots@example.com" --data-urlencode "password=screenshots123" -o /dev/null
+  --data-urlencode "email=shots@example.com" --data-urlencode "username=hafeezpchub" --data-urlencode "password=screenshots123" -o /dev/null
 curl -s -b "$JAR" -X POST "http://localhost:3112/r/$PASS_ID/claim" -o /dev/null
 curl -s -b "$JAR" -X POST "http://localhost:3112/r/$FAIL_ID/claim" -o /dev/null
 # A little traffic, so the "who is looking" panel renders with real numbers

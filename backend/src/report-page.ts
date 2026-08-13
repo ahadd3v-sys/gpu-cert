@@ -85,7 +85,13 @@ function renderSeal(verdict: "Pass" | "Fail"): string {
   </svg>`;
 }
 
-export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): string {
+export interface CertificateViewer {
+  loggedIn: boolean;
+  emailVerified: boolean;
+  justBlocked: boolean;
+}
+
+export function renderReportPage(report: ReportRow, viewer: CertificateViewer): string {
   const passed = report.verdict === "Pass";
   // Guarded: a card whose telemetry reported no VRAM total would otherwise
   // divide by zero and print "NaN%" on the certificate.
@@ -118,14 +124,19 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
          </section>`
       : "";
 
+  // A certificate can only be attached to an account whose address has been
+  // confirmed. Saying so here, rather than only failing on submit, means the
+  // button never lies about what it will do.
   const claimAction =
-    report.user_id === null
-      ? viewerLoggedIn
-        ? `<form method="post" action="/r/${esc(report.id)}/claim" class="claim-form">
-             <button type="submit" class="claim-button">Save to my account</button>
-           </form>`
-        : `<p class="claim-prompt"><a href="/login?next=/r/${esc(report.id)}">Log in</a> to save this report to your account.</p>`
-      : `<p class="claim-prompt">Saved to an account.</p>`;
+    report.user_id !== null
+      ? `<p class="claim-prompt">Saved to an account.</p>`
+      : !viewer.loggedIn
+        ? `<p class="claim-prompt"><a href="/login?next=/r/${esc(report.id)}">Log in</a> to save this report to your account.</p>`
+        : viewer.emailVerified
+          ? `<form method="post" action="/r/${esc(report.id)}/claim" class="claim-form">
+               <button type="submit" class="claim-button">Save to my account</button>
+             </form>`
+          : `<p class="claim-prompt">${viewer.justBlocked ? "Confirm your email address first" : "Confirm your email address"} to save this certificate to your account. <a href="/dashboard">Send the link again</a>.</p>`;
 
   return `<!doctype html>
 <html lang="en">

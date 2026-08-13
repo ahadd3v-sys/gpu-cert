@@ -81,6 +81,16 @@ switch (command) {
     process.stdout.write(await createEmailToken(args[0], args[1] as "verify" | "reset", 60));
     break;
   }
+  case "owner-of": {
+    const res = await db.execute({ sql: "SELECT COALESCE(user_id,'none') AS o FROM reports WHERE id = ?", args: [args[0]] });
+    process.stdout.write(String(res.rows[0]?.o ?? "missing"));
+    break;
+  }
+  case "username-of": {
+    const res = await db.execute({ sql: "SELECT COALESCE(username,'none') AS u FROM users WHERE email = ?", args: [args[0]] });
+    process.stdout.write(String(res.rows[0]?.u ?? "missing"));
+    break;
+  }
   case "views": {
     // args: reportId, kind
     const res = await db.execute({
