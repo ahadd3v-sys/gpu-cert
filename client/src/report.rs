@@ -104,6 +104,13 @@ impl FurTestReport {
 pub struct CertifyResponse {
     pub report_url: String,
     pub badge_url: String,
+    /// "Pass" or "Fail", decided by the backend. Taken from the response
+    /// rather than recomputed here, because two implementations of "did this
+    /// card pass" will eventually disagree, and a console reading PASS over a
+    /// certificate reading FAIL is the worst possible version of that.
+    pub verdict: String,
+    /// Why it failed, in the certificate's own words. Empty on a pass.
+    pub verdict_reasons: Vec<String>,
     /// Email of the account the report was filed under, if an upload key was
     /// sent and recognized. `None` means the report is public but unattached,
     /// which is a normal outcome, not an error.
@@ -247,6 +254,12 @@ fn post_payload(payload: &str, upload_key: Option<&str>) -> anyhow::Result<Certi
             filed_to: Option<String>,
             #[serde(default)]
             upload_key_recognized: Option<bool>,
+            // Defaulted rather than required, so a client stays compatible
+            // with a backend that has not shipped this field yet.
+            #[serde(default)]
+            verdict: Option<String>,
+            #[serde(default)]
+            verdict_reasons: Vec<String>,
         }
         let raw: RawResponse = match resp.json() {
             Ok(r) => r,
@@ -261,6 +274,8 @@ fn post_payload(payload: &str, upload_key: Option<&str>) -> anyhow::Result<Certi
             badge_url: raw.badge_url,
             filed_to: raw.filed_to,
             upload_key_recognized: raw.upload_key_recognized,
+            verdict: raw.verdict.unwrap_or_else(|| "Pass".to_string()),
+            verdict_reasons: raw.verdict_reasons,
         });
     }
 

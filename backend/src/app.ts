@@ -382,6 +382,12 @@ app.post("/api/certify", async (c) => {
   return c.json({
     report_url: `${BASE_URL}/r/${id}`,
     badge_url: `${BASE_URL}/r/${id}/badge`,
+    // The verdict is computed here, not in the client, so the client is told
+    // what it was rather than deriving its own. Two implementations of "did
+    // this card pass" would eventually disagree, and the console saying PASS
+    // over a certificate that reads FAIL is the worst version of that.
+    verdict: result.verdict,
+    verdict_reasons: result.reasons,
     // Lets the exe print "filed to <account>" vs. "not attached to an
     // account" instead of guessing which happened.
     filed_to: keyOwner?.email ?? null,

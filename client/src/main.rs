@@ -5,9 +5,9 @@ mod fingerprint;
 mod nvml;
 mod report;
 mod safety;
+mod ui;
 mod vulkan;
 
-use std::io::Write;
 use std::time::{Duration, Instant};
 
 use fingerprint::Fingerprint;
@@ -150,7 +150,8 @@ fn pause_before_exit() {
 }
 
 fn run() -> anyhow::Result<()> {
-    println!("gpu-cert v{}, hardware verification client", env!("CARGO_PKG_VERSION"));
+    ui::init();
+    ui::banner(env!("CARGO_PKG_VERSION"));
 
     if std::env::args().any(|a| a == "--forget-account") {
         account::forget()?;
@@ -174,7 +175,6 @@ fn run() -> anyhow::Result<()> {
 
     let fast = std::env::args().any(|a| a == "--fast");
     let (stress_duration, vram_duration, fur_duration) = if fast {
-        println!("(--fast: running short debug-length tests, not a real certificate)");
         (FAST_STRESS_TEST_DURATION, FAST_VRAM_TEST_DURATION, FAST_FUR_TEST_DURATION)
     } else {
         (STRESS_TEST_DURATION, VRAM_TEST_DURATION, FUR_TEST_DURATION)
@@ -199,10 +199,7 @@ fn run() -> anyhow::Result<()> {
         telemetry.vram_total_bytes / 1_048_576,
         telemetry.vbios_version
     ));
-    println!("Detected GPU: {} (VRAM: {} MB)", telemetry.name, telemetry.vram_total_bytes / 1_048_576);
-
     let fingerprint = Fingerprint::from_telemetry(&telemetry);
-    println!("Fingerprint: {}", fingerprint.hash);
 
     // Matched against the telemetry rather than taken as device 0, so the
     // card being tested is provably the card being certified. See
@@ -213,7 +210,12 @@ fn run() -> anyhow::Result<()> {
         device_id: telemetry.pci_device_id,
         name: telemetry.name.clone(),
     })?;
-    println!("Vulkan device: {}", ctx.device_name);
+    let mut screen = ui::Screen::new(env!("CARGO_PKG_VERSION"), fast);
+    screen.set_device(
+        &telemetry.name,
+        telemetry.vram_total_bytes / 1_048_576,
+        &format!("Vulkan: {}", ctx.device_name),
+    );
     diag::record(format!(
         "selected {}: heap {} of {}MB, device-local types {:?}, maxStorageBufferRange={}, maxMemoryAllocationSize={}MB, budget={}",
         ctx.device_name,
@@ -255,7 +257,7 @@ fn run() -> anyhow::Result<()> {
     }
 
     diag::phase("stress test");
-    println!("Running stress test ({}s)...", stress_duration.as_secs());
+    screen.start(0, "starting");
     let mut telemetry_series = Vec::new();
     let stress_started = Instant::now();
     let stress_run = vulkan::stress::run(&ctx, stress_duration, |elapsed| {
@@ -266,19 +268,22 @@ fn run() -> anyhow::Result<()> {
         match gpu.read_primary_gpu() {
             Ok(sample_telemetry) => {
                 let sample = sample_from_telemetry(elapsed, &sample_telemetry);
-                print_progress(&format!(
-                    "  {:>3}s  {:>3}\u{b0}C  {:>3}% load  {:>4}W  {:>4}MHz core  {:>4}MHz mem",
-                    elapsed.as_secs(),
-                    sample.temperature_c,
-                    sample.utilization_pct,
-                    sample.power_draw_mw / 1000,
-                    sample.graphics_clock_mhz,
-                    sample.memory_clock_mhz,
-                ));
+                screen.update(
+                    0,
+                    elapsed.as_secs_f32() / stress_duration.as_secs_f32(),
+                    &format!(
+                        "{}\u{b0}C   {}% load   {} W   {} MHz core   {} MHz mem",
+                        sample.temperature_c,
+                        sample.utilization_pct,
+                        sample.power_draw_mw / 1000,
+                        sample.graphics_clock_mhz,
+                        sample.memory_clock_mhz,
+                    ),
+                );
                 let unsafe_temp = safety::is_temp_unsafe(sample.temperature_c);
                 telemetry_series.push(sample);
                 if unsafe_temp {
-                    print_abort_warning(sample_telemetry.temperature_c);
+                    screen.warn(&abort_warning(sample_telemetry.temperature_c));
                 }
                 !unsafe_temp
             }
@@ -286,70 +291,92 @@ fn run() -> anyhow::Result<()> {
             // real test, keep going rather than false-trip the watchdog.
             Err(_) => true,
         }
-    })?;
-    println!();
+    })
+    .inspect_err(|e| screen.fail(0, &e.to_string()))?;
     let stress_report: StressTestReport =
         report::build_stress_report(telemetry_series, &stress_run, stress_started.elapsed());
-    println!("Stress test complete: {} dispatches", stress_report.dispatch_count);
+    screen.finish(
+        0,
+        &format!(
+            "{} dispatches, peak {}\u{b0}C",
+            stress_report.dispatch_count,
+            stress_report.telemetry_series.iter().map(|s| s.temperature_c).max().unwrap_or(0)
+        ),
+    );
 
     diag::phase("VRAM pattern test");
-    println!("Running VRAM pattern test ({}s)...", vram_duration.as_secs());
+    screen.start(1, "allocating");
     let vram_result = vulkan::vram_test::run(
         &ctx,
         telemetry.vram_total_bytes,
         VRAM_TEST_FRACTION,
         vram_duration,
         |passes_run, total_errors, elapsed| {
-            print_progress(&format!(
-                "  pass {:>3}   errors {:>3}   {:>3}s",
-                passes_run,
-                total_errors,
-                elapsed.as_secs()
-            ));
+            screen.update(
+                1,
+                elapsed.as_secs_f32() / vram_duration.as_secs_f32(),
+                &format!("pass {passes_run}   {total_errors} errors"),
+            );
             session.heartbeat();
             match gpu.read_primary_gpu() {
                 Ok(t) => {
                     let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
                     if unsafe_temp {
-                        print_abort_warning(t.temperature_c);
+                        screen.warn(&abort_warning(t.temperature_c));
                     }
                     !unsafe_temp
                 }
                 Err(_) => true,
             }
         },
-    )?;
-    println!();
+    )
+    .inspect_err(|e| screen.fail(1, &e.to_string()))?;
     let vram_report = VramTestReport::from_result(&vram_result);
-    println!(
-        "VRAM test complete: {} passes, {} errors across {} MB tested",
-        vram_report.passes_run,
-        vram_report.total_errors,
-        vram_report.bytes_tested / 1_048_576
+    let coverage_pct = (vram_report.bytes_tested * 100)
+        .checked_div(telemetry.vram_total_bytes)
+        .unwrap_or(0);
+    screen.finish(
+        1,
+        &format!(
+            "{} passes over {} MB ({}% of the card), {} errors",
+            vram_report.passes_run,
+            vram_report.bytes_tested / 1_048_576,
+            coverage_pct,
+            vram_report.total_errors
+        ),
     );
 
     diag::phase("render integrity test");
-    println!("Running render integrity test ({}s)...", fur_duration.as_secs());
+    screen.start(2, "building the reference image");
     let fur_result = vulkan::fur_test::run(&ctx, fur_duration, |elapsed| {
-        print_progress(&format!("  {:>3}s", elapsed.as_secs()));
+        screen.update(
+            2,
+            elapsed.as_secs_f32() / fur_duration.as_secs_f32(),
+            "comparing every pixel of every frame",
+        );
         session.heartbeat();
         match gpu.read_primary_gpu() {
             Ok(t) => {
                 let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
                 if unsafe_temp {
-                    print_abort_warning(t.temperature_c);
+                    screen.warn(&abort_warning(t.temperature_c));
                 }
                 !unsafe_temp
             }
             Err(_) => true,
         }
-    })?;
-    println!();
+    })
+    .inspect_err(|e| screen.fail(2, &e.to_string()))?;
     let fur_report = FurTestReport::from_result(&fur_result);
-    println!(
-        "Render integrity test complete: {} frames, {} of {} pixels mismatched",
-        fur_report.frames_rendered, fur_report.mismatches, fur_report.pixels_checked
+    screen.finish(
+        2,
+        &format!(
+            "{} frames, {} pixels checked, {} mismatched",
+            fur_report.frames_rendered, fur_report.pixels_checked, fur_report.mismatches
+        ),
     );
+
+    let vram_report_errors = vram_report.total_errors;
 
     let request = CertifyRequest {
         attestation: session.attestation(),
@@ -368,44 +395,53 @@ fn run() -> anyhow::Result<()> {
     // open. Heartbeats only fire on an interval, so without this a short run
     // uploads nothing and a long one loses its final interval.
     session.flush_log();
-    println!("Submitting report...");
+    screen.start(2, "filing the certificate");
     let response = report::submit(&request, upload_key.as_deref())?;
-    println!("Done. Report: {}", response.report_url);
-    println!("Badge: {}", response.badge_url);
 
-    match (&response.filed_to, response.upload_key_recognized) {
-        (Some(email), _) => println!("Filed to {email}."),
-        // A key was sent and rejected. The report is still valid and public, so
-        // this is a note about attribution, not a failed run.
-        (None, Some(false)) => {
-            println!(
-                "The upload key wasn't recognized, so this certificate isn't attached to an account."
-            );
-            println!("Check the key on your dashboard, then add this certificate from its page.");
-        }
-        (None, _) => println!("Not attached to an account. You can add it from the report page."),
-    }
+    let passed = response.verdict.eq_ignore_ascii_case("pass");
+    let headline = if passed {
+        format!("{} passed every test", telemetry.name)
+    } else {
+        response
+            .verdict_reasons
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("{} failed", telemetry.name))
+    };
+
+    let mut lines: Vec<(&str, String)> = vec![
+        ("Coverage", format!("{coverage_pct}% of VRAM, {} errors", vram_report_errors)),
+        ("Report", response.report_url.clone()),
+        ("Badge", response.badge_url.clone()),
+    ];
+    lines.push(match (&response.filed_to, response.upload_key_recognized) {
+        (Some(email), _) => ("Filed to", email.clone()),
+        // A key was sent and rejected. The report is still valid and public,
+        // so this is a note about attribution, not a failed run.
+        (None, Some(false)) => (
+            "Account",
+            "the upload key was not recognised. Attach this from the report page.".to_string(),
+        ),
+        (None, _) => ("Account", "not attached. You can attach it from the report page.".to_string()),
+    });
+
+    ui::result(env!("CARGO_PKG_VERSION"), passed, &headline, &lines);
 
     open_browser(&response.report_url);
 
     Ok(())
 }
 
-fn print_progress(line: &str) {
-    print!("\r{line}                    ");
-    let _ = std::io::stdout().flush();
-}
-
-/// Printed once, right before a test loop aborts because the watchdog
-/// tripped; see safety.rs. Aborting is still followed by a normal report
-/// submission: an early stop for an unsafe temperature is itself a
-/// meaningful, certifiable finding, not a run to just discard.
-fn print_abort_warning(temp_c: u32) {
-    println!(
-        "\nStopping this test: GPU reached {temp_c}\u{b0}C, at or above the {}\u{b0}C safety limit. \
-         Continuing to load the card at this temperature isn't safe.",
+/// Shown once, right before a test loop aborts because the watchdog tripped;
+/// see safety.rs. Aborting is still followed by a normal report submission: an
+/// early stop for an unsafe temperature is itself a meaningful, certifiable
+/// finding, not a run to just discard.
+fn abort_warning(temp_c: u32) -> String {
+    format!(
+        "Stopping this test: the GPU reached {temp_c}\u{b0}C, at or above the {}\u{b0}C safety \
+         limit. Continuing to load the card at this temperature is not safe.",
         safety::SAFETY_ABORT_TEMP_C
-    );
+    )
 }
 
 /// Opens the report page so the seller lands back on the site to see (and,
