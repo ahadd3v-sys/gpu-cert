@@ -25,6 +25,10 @@ import {
   recordSessionFailure,
   recordSessionRejection,
   setReportSerial,
+  adminOverview,
+  adminRecentReports,
+  adminRecentSessions,
+  adminSessionDetail,
   consumeTestSession,
   countRecentSessions,
   createFeedback,
@@ -54,7 +58,7 @@ import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/p
 import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
 import { renderReportPage } from "./report-page.js";
 import { renderBadge } from "./badge.js";
-import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback, renderNotice, renderForgotPassword, renderResetPassword } from "./pages.js";
+import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback, renderNotice, renderForgotPassword, renderResetPassword, renderAdmin } from "./pages.js";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpucert.com";
 const SESSION_COOKIE_OPTS = {
@@ -539,6 +543,53 @@ app.post("/r/:reportId/serial", async (c) => {
 
   const ok = await setReportSerial(reportId, userId, serial.slice(0, MAX_SERIAL_LENGTH));
   return c.redirect(`/r/${reportId}${ok ? "" : "?serial=refused"}`);
+});
+
+// Everything on this page is already in the database; the page exists so that
+// reading it does not require a shell and the production credentials. Every bug
+// found during the first week was diagnosed by hand-running SQL against
+// production, which is fine for one person on one laptop and a bad habit to
+// keep.
+//
+// Access is an allowlist of addresses in an environment variable, checked
+// against the logged-in account, not a flag in the database. A column can be
+// set by anything that can write to the database, including a bug in a route
+// that was never meant to touch it; an env var can only be changed by someone
+// who can already deploy. Empty means nobody, so a missing variable locks the
+// page rather than opening it.
+function adminEmails(): string[] {
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+async function requireAdmin(
+  c: Context
+): Promise<{ ok: true } | { ok: false; response: Response | Promise<Response> }> {
+  const userId = await getSessionUserId(c);
+  const user = userId ? await getUserById(userId) : null;
+  const allowed = adminEmails();
+  if (!user || allowed.length === 0 || !allowed.includes(user.email.toLowerCase())) {
+    // 404 rather than 403: an admin page that announces itself to everyone who
+    // guesses the path is a smaller target if it simply is not there.
+    return { ok: false, response: c.notFound() };
+  }
+  return { ok: true };
+}
+
+app.get("/admin", async (c) => {
+  const gate = await requireAdmin(c);
+  if (!gate.ok) return gate.response;
+
+  const sessionId = c.req.query("session");
+  const [overview, reports, sessions, detail] = await Promise.all([
+    adminOverview(),
+    adminRecentReports(),
+    adminRecentSessions(),
+    sessionId ? adminSessionDetail(sessionId) : Promise.resolve(null),
+  ]);
+  return c.html(renderAdmin({ overview, reports, sessions, detail }));
 });
 
 // The certificate's whole value to a buyer is that they don't have to take

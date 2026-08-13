@@ -32,6 +32,68 @@ export const TOKENS_CSS = `:root {
     --fail: #96432f;
   }`;
 
+/// Dark tokens for the site's own pages, and deliberately not for the
+/// certificate.
+///
+/// A certificate is a document about someone else's hardware, shown to a
+/// stranger who is deciding whether to trust it. It should look the same to
+/// everyone who opens it, the way a printed document does, rather than
+/// rearranging itself around the reader's operating system setting. So
+/// report-page.ts imports TOKENS_CSS alone and never this.
+///
+/// The site around it is a different thing: it is software you use, and it
+/// should behave like software.
+///
+/// Applied by [data-theme="dark"] rather than by a media query alone, because
+/// the toggle has to be able to win in both directions: a viewer who prefers
+/// dark system-wide may still want this light, and the reverse.
+export const DARK_TOKENS_CSS = `
+  :root[data-theme="dark"] {
+    --paper: #17161a;
+    --paper-deep: #26242b;
+    --paper-edge: #2f2c35;
+    --ink: #e8e4dc;
+    --ink-muted: #9a94a3;
+    --mark: #f0ece4;
+    --pass: #6fae83;
+    --fail: #d1785f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #17161a;
+      --paper-deep: #26242b;
+      --paper-edge: #2f2c35;
+      --ink: #e8e4dc;
+      --ink-muted: #9a94a3;
+      --mark: #f0ece4;
+      --pass: #6fae83;
+      --fail: #d1785f;
+    }
+  }`;
+
+/// Runs before the first paint, so a dark-mode viewer never sees a white flash
+/// on the way in. That is the entire reason it is inline in the head rather
+/// than a deferred script.
+export const THEME_SCRIPT = `<script>(function(){try{var t=localStorage.getItem("gpucert-theme");if(t){document.documentElement.setAttribute("data-theme",t)}}catch(e){}})()</script>`;
+
+export const THEME_TOGGLE = `<button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch between light and dark">
+  <span aria-hidden="true" class="theme-toggle-mark"></span>
+</button>`;
+
+/// Written out rather than inferred, because "the opposite of what it looks
+/// like now" has to account for a viewer who has never chosen: the first click
+/// must flip away from whatever the system gave them, not toward it.
+export const THEME_SCRIPT_TAIL = `<script>(function(){
+  var b=document.getElementById("theme-toggle");if(!b)return;
+  b.addEventListener("click",function(){
+    var current=document.documentElement.getAttribute("data-theme");
+    if(!current){current=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}
+    var next=current==="dark"?"light":"dark";
+    document.documentElement.setAttribute("data-theme",next);
+    try{localStorage.setItem("gpucert-theme",next)}catch(e){}
+  });
+})()</script>`;
+
 export const FONT_FACE_CSS = `@font-face {
     font-family: "Space Grotesk";
     font-style: normal;
@@ -94,7 +156,25 @@ const SITE_CSS = `
 
   ${TOKENS_CSS}
 
+  ${DARK_TOKENS_CSS}
+
   * { box-sizing: border-box; }
+
+  /* Sits in the masthead beside the nav. Deliberately unobtrusive: a theme
+     switch is not a feature anyone came here for. */
+  .theme-toggle {
+    background: none; border: 1px solid var(--paper-deep); border-radius: 2px;
+    width: 30px; height: 30px; padding: 0; cursor: pointer; color: var(--ink-muted);
+    display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  }
+  .theme-toggle:hover { border-color: var(--ink-muted); color: var(--ink); }
+  /* A half-filled disc, which reads the same way round in either theme rather
+     than needing a sun and a moon that must be swapped by script. */
+  .theme-toggle-mark {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 1.4px solid currentColor;
+    background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+  }
 
   body {
     margin: 0;
@@ -251,6 +331,7 @@ export function sitePage({ title, nav = "", css = "", width = 1100, body }: Page
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(pageTitle(title))}</title>
 ${FAVICON_LINK}
+${THEME_SCRIPT}
 <style>${SITE_CSS}
   main.page { max-width: ${width}px; margin: 0 auto; padding: 48px 20px 24px; }
 ${css}
@@ -272,7 +353,7 @@ ${css}
           <div class="tagline">Independent Verification Protocol</div>
         </div>
       </a>
-      <nav class="masthead-nav">${nav}</nav>
+      <nav class="masthead-nav">${nav}${THEME_TOGGLE}</nav>
     </header>
 
     <div class="rule-double"></div>
@@ -290,6 +371,7 @@ ${css}
     <a href="/feedback">Feedback</a>
   </p>
 </footer>
+${THEME_SCRIPT_TAIL}
 </body>
 </html>`;
 }

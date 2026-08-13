@@ -544,6 +544,68 @@ export async function setReportSerial(
   return res.rowsAffected > 0;
 }
 
+/// Everything the admin page shows, in one round trip each.
+///
+/// These are the queries that have been run by hand against production all day
+/// to answer "what actually happened", which is the argument for the page
+/// existing: the answers were always in the database and always needed someone
+/// with a shell to get them out.
+export async function adminOverview(): Promise<Record<string, number>> {
+  await ensureSchema();
+  const res = await db().execute(`SELECT
+    (SELECT COUNT(*) FROM reports) reports,
+    (SELECT COUNT(DISTINCT fingerprint_hash) FROM reports) cards,
+    (SELECT COUNT(*) FROM reports WHERE verdict = 'Fail') failed_cards,
+    (SELECT COUNT(*) FROM users) users,
+    (SELECT COUNT(*) FROM reports WHERE user_id IS NOT NULL) claimed,
+    (SELECT COUNT(*) FROM test_sessions) sessions,
+    (SELECT COUNT(*) FROM test_sessions WHERE consumed_at IS NOT NULL) completed,
+    (SELECT COUNT(*) FROM test_sessions WHERE failed_at IS NOT NULL) failed_runs,
+    (SELECT COUNT(*) FROM report_views WHERE kind = 'page') page_views,
+    (SELECT COUNT(*) FROM report_views WHERE kind = 'badge') badge_views,
+    (SELECT COUNT(*) FROM feedback) feedback`);
+  const row = res.rows[0] as unknown as Record<string, number>;
+  return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, Number(v)]));
+}
+
+export async function adminRecentReports(limit = 40): Promise<Record<string, unknown>[]> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT id, created_at, client_version, device_name, verdict,
+                 vram_bytes_tested, fingerprint_vram_total_bytes, vram_total_errors,
+                 fur_mismatches, stress_peak_temp_c, user_id, serial_number
+          FROM reports ORDER BY created_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  return res.rows as unknown as Record<string, unknown>[];
+}
+
+/// Sessions matter more than reports here: a report only exists when a run
+/// succeeded, so every interesting failure is invisible if you only look at
+/// reports.
+export async function adminRecentSessions(limit = 40): Promise<Record<string, unknown>[]> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT id, started_at, client_version, device_name, progress_count,
+                 consumed_at, failed_at, failure, rejection,
+                 length(COALESCE(run_log, '')) log_bytes,
+                 length(COALESCE(environment, '')) env_bytes
+          FROM test_sessions ORDER BY started_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  return res.rows as unknown as Record<string, unknown>[];
+}
+
+export async function adminSessionDetail(id: string): Promise<Record<string, unknown> | null> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT id, started_at, device_name, client_version, failure, rejection, run_log, environment
+          FROM test_sessions WHERE id = ?`,
+    args: [id],
+  });
+  return (res.rows[0] as unknown as Record<string, unknown>) ?? null;
+}
+
 export async function recordSessionRejection(
   id: string,
   problems: string[]

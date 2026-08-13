@@ -857,3 +857,140 @@ export function renderResetPassword(opts: { token: string; error?: string }): st
     }`,
   });
 }
+
+
+/// The page that replaces running SQL against production by hand.
+///
+/// Reports are the successes, and the successes are the least interesting rows
+/// in the database. Every bug found today came from a session that never
+/// produced a report: a crash, a cancelled window, a rejected submission. So
+/// sessions get equal billing and their failure and rejection text is shown in
+/// full rather than truncated to fit a column.
+export function renderAdmin(opts: {
+  overview: Record<string, number>;
+  reports: Record<string, unknown>[];
+  sessions: Record<string, unknown>[];
+  detail: Record<string, unknown> | null;
+}): string {
+  const n = (v: unknown) => Number(v ?? 0);
+  const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+  const o = opts.overview;
+
+  const stat = (label: string, value: string | number, note = "") =>
+    `<div class="stat"><div class="stat-value">${esc(String(value))}</div>
+       <div class="stat-label">${esc(label)}</div>
+       ${note ? `<div class="stat-note">${esc(note)}</div>` : ""}</div>`;
+
+  const reportRows = opts.reports
+    .map((r) => {
+      const cov = pct(n(r.vram_bytes_tested), n(r.fingerprint_vram_total_bytes));
+      const bad = n(r.vram_total_errors) > 0 || n(r.fur_mismatches) > 0;
+      return `<tr>
+        <td class="mono">${esc(String(r.created_at).slice(5, 16))}</td>
+        <td>${esc(String(r.device_name))}</td>
+        <td class="mono">${esc(String(r.client_version))}</td>
+        <td class="${r.verdict === "Pass" ? "ok" : "bad"}">${esc(String(r.verdict))}</td>
+        <td class="mono">${cov}%</td>
+        <td class="mono ${bad ? "bad" : ""}">${n(r.vram_total_errors)} / ${n(r.fur_mismatches)}</td>
+        <td class="mono">${n(r.stress_peak_temp_c)}C</td>
+        <td>${r.user_id ? "claimed" : ""}${r.serial_number ? " serial" : ""}</td>
+        <td><a href="/r/${esc(String(r.id))}">open</a></td>
+      </tr>`;
+    })
+    .join("");
+
+  const sessionRows = opts.sessions
+    .map((sn) => {
+      const state = sn.consumed_at ? "submitted" : sn.failed_at ? "failed" : "no report";
+      const why = String(sn.failure || "") || String(sn.rejection || "");
+      return `<tr>
+        <td class="mono">${esc(String(sn.started_at).slice(5, 16))}</td>
+        <td>${esc(String(sn.device_name))}</td>
+        <td class="mono">${esc(String(sn.client_version))}</td>
+        <td class="${state === "submitted" ? "ok" : state === "failed" ? "bad" : "warn"}">${state}</td>
+        <td class="mono">${n(sn.progress_count)}</td>
+        <td class="why">${esc(why)}</td>
+        <td>${n(sn.log_bytes) > 0 ? `<a href="/admin?session=${esc(String(sn.id))}">log</a>` : ""}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const detail = opts.detail
+    ? `<section class="sheet-section">
+         <h2>${esc(String(opts.detail.device_name))}, ${esc(String(opts.detail.started_at).slice(0, 16))}</h2>
+         ${opts.detail.failure ? `<p class="bad">${esc(String(opts.detail.failure))}</p>` : ""}
+         ${opts.detail.rejection ? `<p class="bad">Refused: ${esc(String(opts.detail.rejection))}</p>` : ""}
+         <h3>Run log</h3>
+         <pre class="dump">${esc(String(opts.detail.run_log || "(none)"))}</pre>
+         <h3>Environment</h3>
+         <pre class="dump">${esc(String(opts.detail.environment || "(none)"))}</pre>
+         <p><a href="/admin">back to all sessions</a></p>
+       </section>`
+    : "";
+
+  return sitePage({
+    title: "Admin",
+    nav: `<a href="/dashboard">Dashboard</a>`,
+    width: 1240,
+    css: `
+      .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1px;
+               background: var(--paper-deep); border: 1px solid var(--paper-deep); margin-bottom: 28px; }
+      .stat { background: var(--paper); padding: 12px 14px; }
+      .stat-value { font-size: 22px; font-weight: 600; font-family: "Space Grotesk", sans-serif; }
+      .stat-label { font-size: 11.5px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .stat-note { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
+      table.admin { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+      table.admin th { text-align: left; font-weight: 600; font-size: 11.5px; text-transform: uppercase;
+                       letter-spacing: 0.04em; color: var(--ink-muted); padding: 6px 8px;
+                       border-bottom: 1px solid var(--paper-deep); }
+      table.admin td { padding: 6px 8px; border-bottom: 1px solid var(--paper-deep); vertical-align: top; }
+      .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+      .ok { color: var(--pass); } .bad { color: var(--fail); } .warn { color: var(--ink-muted); }
+      /* Failure text is the reason this page exists, so it is never truncated. */
+      .why { font-size: 12px; color: var(--ink-muted); max-width: 420px; }
+      .dump { background: var(--paper-deep); padding: 12px; overflow-x: auto; font-size: 11.5px;
+              line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 460px; }
+      /* Wide tables scroll rather than pushing the page sideways. */
+      .scroller { overflow-x: auto; }
+    `,
+    body: `
+      <h1>Admin</h1>
+      <div class="stats">
+        ${stat("Certificates", o.reports)}
+        ${stat("Distinct cards", o.cards)}
+        ${stat("Failed cards", o.failed_cards)}
+        ${stat("Claimed", o.claimed, `${pct(o.claimed, o.reports)}% of certificates`)}
+        ${stat("Users", o.users)}
+        ${stat("Runs started", o.sessions)}
+        ${stat("Completed", o.completed, `${pct(o.completed, o.sessions)}% of runs`)}
+        ${stat("Failed runs", o.failed_runs)}
+        ${stat("Badge views", o.badge_views)}
+        ${stat("Page views", o.page_views, `${pct(o.page_views, o.badge_views)}% clickthrough`)}
+        ${stat("Feedback", o.feedback)}
+      </div>
+
+      ${detail}
+
+      <section class="sheet-section">
+        <h2>Runs</h2>
+        <p class="section-note">Every run, including the ones that never produced a certificate. Those are the interesting ones.</p>
+        <div class="scroller">
+          <table class="admin">
+            <thead><tr><th>Started</th><th>Card</th><th>Ver</th><th>Outcome</th><th>Beats</th><th>Why it stopped</th><th></th></tr></thead>
+            <tbody>${sessionRows || `<tr><td colspan="7">No runs yet.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="sheet-section">
+        <h2>Certificates</h2>
+        <div class="scroller">
+          <table class="admin">
+            <thead><tr><th>Issued</th><th>Card</th><th>Ver</th><th>Verdict</th><th>Coverage</th><th>Errors / mismatches</th><th>Peak</th><th></th><th></th></tr></thead>
+            <tbody>${reportRows || `<tr><td colspan="9">No certificates yet.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </section>
+    `,
+  });
+}

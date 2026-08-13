@@ -145,6 +145,33 @@ check "3 wrong pixels out of 176m fails the card" "$(has "$PAGE2" ">FAIL<")"
 check "failure reason is stated" "$(has "$PAGE2" "pixels computed incorrectly")"
 
 echo ""
+echo "admin:"
+# The allowlist is empty in this environment, so the page must not exist for
+# anyone. A missing ADMIN_EMAILS locking the page rather than opening it is the
+# behaviour worth pinning down: the opposite default would expose production
+# data on every deploy that forgot to set it.
+check "the admin page is absent when no allowlist is configured" \
+  "$([ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3111/admin)" = "404" ] && echo 1 || echo 0)"
+check "a logged-in non-admin still cannot see it" \
+  "$([ "$(curl -s -b "$SCRATCH/unv" -o /dev/null -w '%{http_code}' http://localhost:3111/admin)" = "404" ] && echo 1 || echo 0)"
+check "it does not leak its existence with a 403" \
+  "$(curl -s http://localhost:3111/admin | grep -qi "forbidden\|not authorised\|admin" && echo 0 || echo 1)"
+
+echo ""
+echo "theme:"
+# Site pages follow the viewer. The certificate never does: it is a document
+# about someone else's hardware shown to a stranger, and it should look the
+# same to everyone who opens it.
+check "site pages carry the theme toggle" \
+  "$(has "$(curl -s http://localhost:3111/)" 'id="theme-toggle"')"
+check "site pages define dark tokens" \
+  "$(has "$(curl -s http://localhost:3111/)" 'data-theme="dark"')"
+check "the certificate has no toggle" \
+  "$(curl -s "http://localhost:3111/r/$FAIL_ID" | grep -q 'theme-toggle' && echo 0 || echo 1)"
+check "the certificate never goes dark" \
+  "$(curl -s "http://localhost:3111/r/$FAIL_ID" | grep -q 'prefers-color-scheme' && echo 0 || echo 1)"
+
+echo ""
 echo "site:"
 check "home renders" "$(has "$(curl -s http://localhost:3111/)" "Prove the card works")"
 check "verify is in the nav" "$(has "$(curl -s http://localhost:3111/)" 'href="/verify"')"
