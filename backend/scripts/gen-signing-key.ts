@@ -1,5 +1,5 @@
 // Run once (`npm run gen-signing-key`) to provision the real signing key.
-// Prints two PEM values — paste them into Vercel env vars as
+// Prints two PEM values, paste them into Vercel env vars as
 // CERT_SIGNING_PRIVATE_KEY and CERT_SIGNING_PUBLIC_KEY. There is no
 // recovery if the private key is lost: every previously issued report's
 // signature becomes unverifiable against a newly generated key, so back

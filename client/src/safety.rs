@@ -1,7 +1,7 @@
 //! Shared temperature safety ceiling for every sustained-load test (stress,
 //! VRAM, fur render). This is a software watchdog layered on top of the
 //! GPU's own firmware-level thermal/power protections, which remain the
-//! primary safeguard and can't be disabled by user-mode code — same posture
+//! primary safeguard and can't be disabled by user-mode code, same posture
 //! as FurMark/OCCT/memtest_vulkan: abort before the danger zone rather than
 //! trusting a fixed test duration to always be safe. 100°C leaves real
 //! margin below where consumer GPUs typically hit hardware over-temperature

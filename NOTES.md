@@ -6,7 +6,7 @@ broken, what was tried, and why.
 
 ---
 
-## 2026-08-13 — v0.4.0: a certificate now means a test actually ran.
+## 2026-08-13, v0.4.0: a certificate now means a test actually ran.
 
 Before this, `/api/certify` signed whatever JSON it was handed. A seller with
 a dead card could publish a flawless, genuinely-signed, genuinely-verifying
@@ -43,7 +43,7 @@ minutes is refused, and the identical report is accepted once the session has
 genuinely been open that long.
 
 **Also shipped:** a LICENSE (MIT, with the memtest_vulkan zlib notice the VRAM
-shader requires), which the repo had been missing entirely — it was public but
+shader requires), which the repo had been missing entirely. It was public but
 legally all-rights-reserved, which undercut the trust argument it existed to
 make. Plus `/feedback` and a footer that says the code is open on every page,
 since a license nobody can see is not a trust signal.
@@ -57,7 +57,7 @@ allowlist and moderating whatever strangers send an unauthenticated form.
 
 ---
 
-## 2026-08-13 — v0.3.1: the 49% VRAM coverage was my regression, not the hardware.
+## 2026-08-13, v0.3.1: the 49% VRAM coverage was my regression, not the hardware.
 
 Full 10-minute run on the RX 6600 passed clean (v0.3.0, report `ba8f8896`,
 12,563 passes, 941M pixels, 0 errors). That also closes the "never run at
@@ -66,7 +66,7 @@ to the previous run**, which is the tell: free VRAM varies between sessions,
 so an exact repeat is a deterministic cap rather than memory pressure.
 
 **Root cause: `find_largest_heap_memory_type` picked the wrong memory type.**
-This card exposes two DEVICE_LOCAL types on the same 8 GB heap — type 0 plain
+This card exposes two DEVICE_LOCAL types on the same 8 GB heap, type 0 plain
 DEVICE_LOCAL, type 1 also HOST_VISIBLE (the CPU-accessible window, capped far
 below the heap). They tie on heap size, and `Iterator::max_by_key` returns the
 **last** maximum, so v0.2.0 silently started allocating from the host-visible
@@ -79,7 +79,7 @@ pinned by three unit tests using this card's real layout.
 
 The allocation arithmetic is worth keeping as a diagnostic technique. The
 halving cascade lands on exactly 3×1024 + 512 + 256 + 128 + 64 = 4032 MB,
-which pins the ceiling to (4032, 4096) MB — just under 2^32. Reading that
+which pins the ceiling to (4032, 4096) MB, just under 2^32. Reading that
 pattern backwards is what identified it without another hardware run.
 
 Staging and readback buffers now also prefer system RAM over device-local,
@@ -89,7 +89,7 @@ can be attributed from the output instead of reconstructed from arithmetic.
 
 ---
 
-## 2026-08-13 — v0.3.0: audited the NVML path before its first run. It had a silent fingerprint bug.
+## 2026-08-13, v0.3.0: audited the NVML path before its first run. It had a silent fingerprint bug.
 
 An NVIDIA run is coming, and that path had never executed. Rather than spend
 someone else's hardware run discovering things, this is a static audit of
@@ -134,7 +134,7 @@ on NVIDIA and 4 on AMD. It is the bare device ID on both now.
 
 ---
 
-## 2026-08-13 — v0.2.0 confirmed working on the RX 6600. v0.2.1 raises VRAM coverage.
+## 2026-08-13, v0.2.0 confirmed working on the RX 6600. v0.2.1 raises VRAM coverage.
 
 First clean run: **Pass, 0 VRAM errors, 0 render mismatches** (report
 `4d6fe4d4`, `--fast`). Both fixes are confirmed on real hardware.
@@ -152,7 +152,7 @@ a vacuous one:
   produced roughly 85 wrong pixels per frame on this same healthy card.
 
 **What was still wrong:** coverage was 4032 MB, 49% of the card, against a
-target of 85%. Not `--fast`-related — segments are allocated once, before the
+target of 85%. Not `--fast`-related, segments are allocated once, before the
 timing loop, so duration changes pass count and nothing else. The cause was
 the allocator stopping at the first refused allocation, having never asked
 how much VRAM was actually free.
@@ -167,7 +167,7 @@ as a percentage and says so when other applications are the limiting factor.
 
 ---
 
-## 2026-08-13 — v0.2.0 shipped. Both root causes fixed, plus a verification surface.
+## 2026-08-13, v0.2.0 shipped. Both root causes fixed, plus a verification surface.
 
 Everything in the entry below is now addressed. What changed:
 
@@ -194,7 +194,7 @@ would only hide defects.
 
 **Also fixed while in here:** a missing write-visibility barrier between the
 VRAM fill and verify dispatches (a fence guarantees execution finished, not
-that writes left cache — a false pass was possible, which is the one outcome
+that writes left cache, a false pass was possible, which is the one outcome
 this test exists to rule out); an open redirect via `?next=` on login/signup;
 a login timing oracle that leaked which emails have accounts; no email
 validation on signup; `account::normalize` rejecting a valid key whose first
@@ -205,7 +205,7 @@ fails.
 
 **New: verification actually exists.** `verifyReportSignature` was exported
 and never called, while the certificate footer claimed it was "verifiable
-against GPU Cert's published signing key" — a key that was not published,
+against GPU Cert's published signing key", against a key that was not published,
 against a check that did not exist. There is now `/verify`, `/verify/:ref`,
 and `/.well-known/gpu-cert-key.pem`. See the README section.
 
@@ -215,14 +215,14 @@ assertions against a real server on a throwaway DB). The Windows exe
 cross-builds to a 3.9 MB PE32+ console binary.
 
 **Still open, and honestly unproven:** none of this has run on real hardware
-yet. The prediction to check against is specific — the VRAM test should now
+yet. The prediction to check against is specific, the VRAM test should now
 report **0 errors** on a healthy card, and the render test **0 mismatches**.
 If the VRAM test still reports roughly 2^30 errors per pass, the segmentation
 is not taking effect. And the NVIDIA path still has no real run at all.
 
 ---
 
-## 2026-08-13 — v0.1.9's two fixes are both wrong. Don't spend a hardware run on it. (RESOLVED by v0.2.0 above)
+## 2026-08-13, v0.1.9's two fixes are both wrong. Don't spend a hardware run on it. (RESOLVED by v0.2.0 above)
 
 Diagnosed from the two real RX 6600 reports already in the production Turso DB
 (`d36aaf5b` v0.1.7 and `d94f925e` v0.1.8), not from a new run. Both root causes

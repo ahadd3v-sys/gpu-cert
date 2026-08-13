@@ -18,7 +18,7 @@ export function db(): Client {
 //
 // reports.user_id is nullable: the exe submits anonymously (it never holds
 // a browser session cookie), so a report starts unowned and is "claimed"
-// by whoever opens its report page while logged in — see claimReport().
+// by whoever opens its report page while logged in; see claimReport().
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,

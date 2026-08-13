@@ -1,4 +1,4 @@
-//! Vulkan compute context via `ash` — raw bindings, not `wgpu`, so the VRAM
+//! Vulkan compute context via `ash`, raw bindings, not `wgpu`, so the VRAM
 //! pattern test and stress kernels get the same buffer-level control
 //! `memtest_vulkan` (our reference implementation) uses. This gives one
 //! cross-vendor code path for both Nvidia and AMD load/VRAM testing,

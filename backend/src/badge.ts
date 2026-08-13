@@ -7,8 +7,8 @@ import {
 } from "./fonts.js";
 
 // Plain object literals shaped like React elements ({type, props}), not
-// JSX. `@vercel/og`/satori only need the shape — they don't call any real
-// React API — but writing `<div>` JSX syntax would compile to a call into
+// JSX. `@vercel/og`/satori only need the shape. They don't call any real
+// React API, but writing `<div>` JSX syntax would compile to a call into
 // "react/jsx-runtime", pulling the actual React package back in as a
 // runtime dependency for the sake of one image. This stays JSX-shaped
 // without needing JSX or React installed. Typed `any` deliberately: the
@@ -19,7 +19,7 @@ function el(type: string, props: Record<string, any>): any {
   return { type, key: null, props };
 }
 
-// Same paper/ink/mark palette as the rest of the site — this is the image
+// Same paper/ink/mark palette as the rest of the site. This is the image
 // that represents a certificate off-site (embedded in a listing, shared to
 // Discord), so it can't contradict the identity the certificate itself sets.
 const PAPER = "#ece9e2";

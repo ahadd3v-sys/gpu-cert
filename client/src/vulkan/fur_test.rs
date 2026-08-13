@@ -1,7 +1,7 @@
 //! Graphics-pipeline correctness + display-output test. The compute stress
 //! kernel (stress.rs) generates thermal/power load but never checks its own
 //! output, and runs pure compute, never touching the rasterizer/ROP/texture
-//! path a real display pipeline uses — so neither silent ALU corruption nor
+//! path a real display pipeline uses, so neither silent ALU corruption nor
 //! rasterizer-path corruption would be caught by it. This test renders
 //! `fur.frag` (a fullscreen fragment shader, conceptually like FurMark's
 //! "fur" load: heavy per-pixel ALU work through the real graphics pipeline)
@@ -9,7 +9,7 @@
 //! coordinate, iteration count, time), so the expected output at any pixel
 //! can be recomputed on the CPU and compared against what the GPU actually
 //! rendered. A mismatch beyond normal floating-point tolerance means the
-//! GPU computed the wrong answer under load — a class of defect neither the
+//! GPU computed the wrong answer under load, a class of defect neither the
 //! compute stress test nor the VRAM test can see.
 
 use ash::vk;
@@ -108,7 +108,7 @@ impl FurPipeline {
             // The render pass writes the color attachment; the very next
             // command in the same command buffer reads it via a transfer
             // copy. Without this explicit dependency, nothing guarantees
-            // the copy waits for the color write to finish — a well-known
+            // the copy waits for the color write to finish, a well-known
             // Vulkan hazard, the default implicit external dependency isn't
             // sufficient here.
             let dependency = vk::SubpassDependency::default()
@@ -152,7 +152,7 @@ impl FurPipeline {
                     .module(frag_module)
                     .name(entry_point),
             ];
-            // No vertex buffers — fur.vert hardcodes a fullscreen triangle
+            // No vertex buffers, fur.vert hardcodes a fullscreen triangle
             // from gl_VertexIndex.
             let vertex_input = vk::PipelineVertexInputStateCreateInfo::default();
             let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
@@ -472,7 +472,7 @@ fn reference_image(seed: u32) -> Vec<u32> {
 /// changes, so it is built once and each frame costs a 64K-element compare
 /// instead of re-deriving per-pixel math. That took coverage from 64 sampled
 /// points per frame to all 65536, which matters for the defect this test is
-/// aimed at — a bad ROP or a bad patch of framebuffer memory is localized,
+/// aimed at, a bad ROP or a bad patch of framebuffer memory is localized,
 /// and a sparse grid can miss it entirely.
 pub fn run(
     ctx: &VulkanContext,

@@ -4,15 +4,15 @@
 // reinvented: --paper/--paper-deep/--ink/--ink-muted below are anurfi's
 // --bg-2/--line/--ink/--muted-2, and --mark is anurfi's --bg (#14120f),
 // which anurfi itself repurposes as its link/accent color rather than a
-// literal "background" — the same repurposing carries over here as GPU
+// literal "background", the same repurposing carries over here as GPU
 // Cert's accent, replacing what used to be a one-off navy. Space Grotesk
 // and Inter are anurfi's own display/body pairing. --pass and --fail are
-// GPU Cert's own addition — anurfi has no verdict semantics — kept
+// GPU Cert's own addition (anurfi has no verdict semantics), kept
 // desaturated so they read as part of the same warm-neutral family
 // instead of a bolted-on traffic-light red/green.
 //
 // The certificate page (report-page.ts) still commits to one fixed paper
-// look rather than following the viewer's light/dark preference — a
+// look rather than following the viewer's light/dark preference, a
 // certificate authority whose letterhead changes color depending on who's
 // looking at it reads as less credible, not more, and the certificate is
 // the thing the whole site exists to make believable. The rest of the site
@@ -47,7 +47,30 @@ export const FONT_FACE_CSS = `@font-face {
     src: url(data:font/woff2;base64,${INTER_WOFF2_BASE64}) format("woff2");
   }`;
 
-// Hexagonal die mark — the letterhead emblem, geometric rather than a literal
+// The emblem again, redrawn for a browser tab rather than reused from
+// renderEmblem(). Two things stop that one working here: it is stroked in
+// `currentColor`, which resolves to nothing in a favicon context, and its
+// hairlines vanish at 16px.
+//
+// So this inverts to solid shapes, a dark tile with a paper hexagon and a dark
+// centre, which still reads as the same mark when it is sixteen pixels wide in
+// a row of twenty tabs. Inline as a data URI rather than a served file so it
+// needs no route, no build step, and no extra request.
+//
+// Single quotes inside the SVG on purpose: it sits in a double-quoted HTML
+// attribute, and `#` has to be percent-encoded or the browser reads it as a
+// fragment and drops the rest of the image.
+const FAVICON_SVG = [
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>",
+  "<rect width='32' height='32' rx='6' fill='%2314120f'/>",
+  "<polygon points='16,4 26,10 26,22 16,28 6,22 6,10' fill='%23ece9e2'/>",
+  "<rect x='12' y='12' width='8' height='8' fill='%2314120f'/>",
+  "</svg>",
+].join("");
+
+export const FAVICON_LINK = `<link rel="icon" href="data:image/svg+xml,${FAVICON_SVG}">`;
+
+// Hexagonal die mark, the letterhead emblem, geometric rather than a literal
 // GPU illustration so it stays legible at 32px and in a favicon. Its straight
 // edges and right angles already read as the same "geometric grotesk"
 // character as Space Grotesk, so it carried over unchanged in the move away
@@ -64,7 +87,7 @@ export function renderEmblem(): string {
 }
 
 // Base stylesheet for the non-certificate pages. The certificate keeps its own
-// sheet — it's a fixed-shape document with layout rules that would only be
+// sheet, it's a fixed-shape document with layout rules that would only be
 // dead weight here.
 const SITE_CSS = `
   ${FONT_FACE_CSS}
@@ -89,7 +112,7 @@ const SITE_CSS = `
     outline-offset: 2px;
   }
 
-  /* One paper sheet per page, ticked at the corners like the certificate —
+  /* One paper sheet per page, ticked at the corners like the certificate:
      the "controlled document" motif carries across the whole site, not
      just the certificate itself. */
   .sheet {
@@ -108,7 +131,7 @@ const SITE_CSS = `
   .rule { border: none; border-top: 1px solid var(--paper-deep); margin: 28px 0; }
   .rule-double { border: none; height: 4px; border-top: 1px solid var(--mark); border-bottom: 1px solid var(--mark); opacity: 0.5; margin: 20px 0; }
 
-  /* Masthead — identical treatment to the certificate's letterhead. */
+  /* Masthead, identical treatment to the certificate's letterhead. */
   .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
   .mark-group { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
   .emblem { width: 32px; height: 32px; color: var(--mark); flex-shrink: 0; }
@@ -127,7 +150,7 @@ const SITE_CSS = `
 
   /* Actions. The filled button is the certificate's claim button, restyled
      to the same mark/paper pairing. Small radius here (anurfi's own
-     convention) — but not on the certificate sheet or its ticks, where a
+     convention), but not on the certificate sheet or its ticks, where a
      rounded corner would break the crop-mark reading of "a printed
      document," which is the one place sharp corners still carry meaning. */
   .btn {
@@ -169,7 +192,7 @@ const SITE_CSS = `
   }
   .field-hint { font-size: 12px; color: var(--ink-muted); margin: 6px 0 0; }
 
-  /* Errors are stated, not apologized for — same register as the
+  /* Errors are stated, not apologized for, same register as the
      certificate's "Why This Failed" list. */
   .notice-fail {
     border-left: 3px solid var(--fail);
@@ -216,7 +239,8 @@ export function sitePage({ title, nav = "", css = "", width = 1100, body }: Page
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} — GPU Cert</title>
+<title>${esc(title)}, GPU Cert</title>
+${FAVICON_LINK}
 <style>${SITE_CSS}
   main.page { max-width: ${width}px; margin: 0 auto; padding: 48px 20px 24px; }
 ${css}

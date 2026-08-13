@@ -4,7 +4,7 @@
 //
 // They are produced by different functions, from different shapes, in
 // different files, at different times. If they ever diverge, nothing fails
-// loudly — certificates just start reporting as forged, including genuine
+// loudly, certificates just start reporting as forged, including genuine
 // ones, on the single page whose entire job is to be trustworthy. So this
 // runs as part of the build rather than living as a comment saying "keep
 // these in sync".

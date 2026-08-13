@@ -1,4 +1,4 @@
-//! Sustained compute load test — repeated dispatches of the FMA-heavy
+//! Sustained compute load test, repeated dispatches of the FMA-heavy
 //! stress kernel to hold every ALU lane busy for `duration`, long enough to
 //! expose thermal throttling and power-limit clock drops. Paired with
 //! telemetry sampling (caller reads NVML/ADL temp+power+clock in between
@@ -12,7 +12,7 @@ use super::device::VulkanContext;
 use super::STRESS_COMP_SPV;
 
 const WORKGROUP_SIZE: u32 = 256;
-const ELEMENT_COUNT: u32 = 1 << 20; // 1M floats — large enough to saturate a compute unit, small enough to fit any card's VRAM budget
+const ELEMENT_COUNT: u32 = 1 << 20; // 1M floats, large enough to saturate a compute unit, small enough to fit any card's VRAM budget
 const ITERATIONS_PER_DISPATCH: u32 = 20_000;
 
 #[repr(C)]
@@ -30,7 +30,7 @@ pub struct StressRunResult {
 
 /// Runs stress dispatches back to back until `duration` elapses, invoking
 /// `on_tick` after every dispatch so the caller can sample GPU telemetry
-/// mid-run — that per-tick sampling is what produces the thermal/clock
+/// mid-run, that per-tick sampling is what produces the thermal/clock
 /// time-series the report is actually judged on, not just a pass/fail.
 /// `on_tick` returns whether to keep going: the caller's safety watchdog
 /// (see `safety.rs`) can return `false` to abort the run early.

@@ -86,7 +86,7 @@ function safeNext(next: unknown): string | null {
 //
 //   - With `Authorization: Bearer <upload key>`, the report is attributed to
 //     that account at ingest. This is the "connect the app to your account"
-//     path — the exe holds the key, so the run files itself.
+//     path, the exe holds the key, so the run files itself.
 //   - Without one, the report is stored unowned (user_id NULL) and stays
 //     anonymous until someone claims it from the report page below.
 //
@@ -451,7 +451,7 @@ app.post("/signup", async (c) => {
   const next = safeNext(form.next);
 
   // The form carries type="email" and required, but a POST doesn't have to
-  // come from the form — without this, an empty string is a valid email as
+  // come from the form, without this, an empty string is a valid email as
   // far as the database is concerned, and it takes the UNIQUE slot for every
   // subsequent malformed signup.
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
@@ -464,7 +464,7 @@ app.post("/signup", async (c) => {
     return c.html(renderSignup(next, "An account with that email already exists"), 409);
   }
 
-  // The check above is a courtesy, not the guarantee — two simultaneous
+  // The check above is a courtesy, not the guarantee, two simultaneous
   // signups for the same address both pass it. The UNIQUE index is what
   // actually enforces it, so its rejection is handled as the same user-facing
   // outcome rather than surfacing as a 500.

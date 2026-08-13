@@ -4,7 +4,7 @@
 //
 // An account is optional everywhere in here, deliberately. The exe runs
 // without one and its report is public the moment it lands, so nothing on
-// this site may imply signing up is a prerequisite to testing a card — the
+// this site may imply signing up is a prerequisite to testing a card, the
 // account only buys you a place where your certificates are collected.
 import { esc } from "./html.js";
 import { sitePage } from "./theme.js";
@@ -23,7 +23,7 @@ function formatDate(iso: string): string {
 
 // "Verify" sits in front of the account links on every page, including for
 // signed-out visitors, because the person most likely to need it is a buyer
-// who was handed a certificate link by a stranger — someone with no account
+// who was handed a certificate link by a stranger, someone with no account
 // and no reason to make one.
 //
 // "Feedback" sits beside it, in the masthead rather than only in the footer,
@@ -72,8 +72,8 @@ const HOME_CSS = `
     margin-right: 3px;
   }
 
-  /* Steps ARE ordered here — you cannot share a link before running the
-     exe — so the ordinals carry real information. */
+  /* Steps ARE ordered here: you cannot share a link before running the
+     exe, so the ordinals carry real information. */
   ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; }
   ol.steps li { counter-increment: step; display: grid; grid-template-columns: 34px 1fr; gap: 14px; padding: 13px 0; border-top: 1px solid var(--paper-deep); }
   ol.steps li:first-child { border-top: none; }
@@ -98,7 +98,7 @@ const HOME_CSS = `
 
   /* The closing section used to be one paragraph capped at 54ch, which left
      the right half of the sheet empty once the page widened. The answer isn't
-     a longer line — past about 75 characters prose gets hard to track — it's
+     a longer line. Past about 75 characters prose gets hard to track, so it's
      giving the row something to hold. The four fields were already named in
      that paragraph, so they move out of the prose and into a panel shaped like
      the certificate's own specification rows, which is what they actually are. */
@@ -339,7 +339,7 @@ const DASHBOARD_CSS = `
   .key-panel form { margin: 0; }
 
   /* Three columns of fixed-width mono don't fit a phone: the certificate
-     number overflows its cell rather than wrapping (it's nowrap by design —
+     number overflows its cell rather than wrapping (it's nowrap by design:
      a broken certificate number is worse than a hidden one). So below 560px
      the number and result columns are dropped and both move under the card
      name, where they have the full row width to sit in. */

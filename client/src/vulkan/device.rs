@@ -14,11 +14,11 @@ pub struct VulkanContext {
     pub device_local_memory_type: u32,
     pub host_visible_memory_type: u32,
     pub device_name: String,
-    /// VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0] — the cap on a
+    /// VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0], the cap on a
     /// single vkCmdDispatch's X-dimension group count. The spec's required
     /// minimum is 65535; real drivers report far more.
     pub max_compute_workgroups_x: u32,
-    /// VkPhysicalDeviceLimits::maxStorageBufferRange — the largest `range`
+    /// VkPhysicalDeviceLimits::maxStorageBufferRange, the largest `range`
     /// a single STORAGE_BUFFER descriptor may cover
     /// (VUID-VkWriteDescriptorSet-descriptorType-00333). It is a `uint32_t`,
     /// so it can never exceed 4 GiB-1 no matter how much VRAM the card has,
@@ -27,12 +27,12 @@ pub struct VulkanContext {
     /// This is not advisory. Binding a larger range doesn't fail loudly: the
     /// range truncates and the shader silently cannot address past it.
     /// Confirmed on an RX 6600, where binding a 7,287,183,768-byte buffer
-    /// left only `7,287,183,768 mod 2^32` = 2,992,216,472 bytes reachable —
+    /// left only `7,287,183,768 mod 2^32` = 2,992,216,472 bytes reachable:
     /// every element past that read back as zero and was miscounted as a
     /// VRAM error. Anything testing more memory than this must split it
     /// across several buffers.
     pub max_storage_buffer_range: u32,
-    /// VkPhysicalDeviceMaintenance3Properties::maxMemoryAllocationSize — the
+    /// VkPhysicalDeviceMaintenance3Properties::maxMemoryAllocationSize, the
     /// largest single vkAllocateMemory this device permits. Frequently
     /// smaller than the heap (3.5 GiB on the RX 6600 against 8 GiB of VRAM),
     /// so covering a card's whole VRAM always means several allocations.
@@ -149,7 +149,7 @@ impl VulkanContext {
             let max_storage_buffer_range = props.limits.max_storage_buffer_range;
 
             // maxMemoryAllocationSize lives in VkPhysicalDeviceMaintenance3Properties,
-            // reachable via vkGetPhysicalDeviceProperties2 — core in Vulkan 1.1
+            // reachable via vkGetPhysicalDeviceProperties2, core in Vulkan 1.1
             // but *not* in 1.0, and calling it against a 1.0 device is invalid.
             // Every GPU this client targets is 1.1+, so the fallback below is
             // belt-and-braces rather than a path expected to run: 256 MiB is
@@ -171,9 +171,9 @@ impl VulkanContext {
             // GRAPHICS, not just COMPUTE: the fur render test (graphics
             // pipeline correctness/display-output check) needs a
             // graphics-capable queue too. Every consumer Nvidia/AMD GPU
-            // exposes at least one queue family supporting both together —
+            // exposes at least one queue family supporting both together:
             // async-compute-only families are additional, not a
-            // replacement — so requiring both here doesn't lose any real
+            // replacement, so requiring both here doesn't lose any real
             // hardware, it just rules out a queue family this client
             // couldn't fully use anyway.
             let queue_families = instance.get_physical_device_queue_family_properties(physical_device);

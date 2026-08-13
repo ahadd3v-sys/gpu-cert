@@ -1,5 +1,5 @@
 // Mirrors anurfi-board/lib/auth.ts's JWT-in-cookie pattern (same jose
-// SignJWT/jwtVerify shape) — the payload just carries a real user id
+// SignJWT/jwtVerify shape). The payload just carries a real user id
 // instead of a fixed owner enum, since this app has open signup instead of
 // two hardcoded passwords.
 import type { Context } from "hono";

@@ -1,4 +1,4 @@
-// scrypt via Node's built-in crypto — same reasoning as lib/signing.ts using
+// scrypt via Node's built-in crypto, same reasoning as lib/signing.ts using
 // built-in Ed25519 instead of a dependency: this only ever runs server-side,
 // no bcrypt/argon2 package needed for a single hash+verify pair.
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
@@ -22,7 +22,7 @@ export function verifyPassword(password: string, stored: string): boolean {
 // Burns the same scrypt work a real verification would, for the login path
 // where no account matched. Without it, "no such email" returns in
 // microseconds while a wrong password takes as long as scrypt does, and that
-// difference is measurable over the network — it lets anyone enumerate which
+// difference is measurable over the network. It lets anyone enumerate which
 // email addresses have accounts here.
 const DUMMY_HASH = hashPassword("gpu-cert-timing-equalizer");
 

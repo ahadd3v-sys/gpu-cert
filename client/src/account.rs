@@ -10,7 +10,7 @@
 //!   3. Paste an upload key in here once; every run after that files itself.
 //!
 //! The key is stored in plain text next to the exe's config dir. It authorizes
-//! exactly one thing — "attribute a report to this account" — and cannot read
+//! exactly one thing ("attribute a report to this account") and cannot read
 //! anything back out, so it's treated as a convenience token rather than a
 //! password. The dashboard can replace it at any time, which is the revocation
 //! story for a machine that's been sold or lost.
@@ -52,7 +52,7 @@ pub fn normalize(input: &str) -> Option<String> {
 
     // Only strips the prefix when what remains is a whole key. Stripping
     // unconditionally would reject a legitimate key pasted without its
-    // prefix whose first group happens to be "GPUC" — the key alphabet
+    // prefix whose first group happens to be "GPUC", the key alphabet
     // contains G, P, U and C, so that is a real (if rare) key, and it would
     // have been rejected as malformed with no way for the user to tell why.
     let body = match compact.len() {
@@ -92,7 +92,7 @@ pub fn forget() -> std::io::Result<()> {
     }
 }
 
-/// Asked once, before the tests start rather than after — a 16-minute run that
+/// Asked once, before the tests start rather than after, a 16-minute run that
 /// then blocks on a question the user walked away from would file itself
 /// anonymously by default, which is the outcome the prompt exists to avoid.
 ///

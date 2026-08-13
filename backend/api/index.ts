@@ -2,7 +2,7 @@ import { app } from "../src/app.js";
 
 export const config = { runtime: "nodejs" };
 
-// Named per-method exports, not a default export — Vercel's Node runtime
+// Named per-method exports, not a default export, Vercel's Node runtime
 // only recognizes the Web fetch-style (Request) => Response signature via
 // named HTTP-method exports (GET/POST/...). A default export, even a
 // literal function declaration, is invoked with the legacy Node

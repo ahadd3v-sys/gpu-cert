@@ -15,8 +15,8 @@ use report::{sample_from_telemetry, CertifyRequest, FurTestReport, StressTestRep
 use vulkan::VulkanContext;
 
 /// Unifies the NVML and ADL backends behind one `read_primary_gpu` so the
-/// rest of `run()` — three test loops that each re-sample telemetry every
-/// tick — doesn't need to know which vendor's card it's running against.
+/// rest of `run()`, three test loops that each re-sample telemetry every
+/// tick, doesn't need to know which vendor's card it's running against.
 enum GpuBackend {
     Nvml(nvml::Nvml),
     #[cfg(target_os = "windows")]
@@ -33,7 +33,7 @@ impl GpuBackend {
     }
 }
 
-/// Tries NVIDIA first, then AMD — not a preference ranking, just an order.
+/// Tries NVIDIA first, then AMD, not a preference ranking, just an order.
 /// A machine only has one or the other in practice, so whichever loads
 /// first is used and the other is never touched.
 fn load_gpu_backend() -> anyhow::Result<GpuBackend> {
@@ -59,7 +59,7 @@ fn load_gpu_backend() -> anyhow::Result<GpuBackend> {
 }
 
 // Phase 1 durations. Not tunable via CLI for end users (vs. keeping the
-// test fixed-length for report comparability) — that's a product decision,
+// test fixed-length for report comparability), that's a product decision,
 // not a stack one, deferred until Ahad weighs in. `--fast` below is a
 // developer-only escape hatch for iterating on the client itself, not a
 // public option; the website's download always runs the real durations.
@@ -67,29 +67,29 @@ const STRESS_TEST_DURATION: Duration = Duration::from_secs(5 * 60);
 const VRAM_TEST_DURATION: Duration = Duration::from_secs(10 * 60);
 const VRAM_TEST_FRACTION: f64 = 0.85;
 // Short relative to the other two: this is a correctness/display-output
-// check exercised under load, not a thermal soak — that's already covered
+// check exercised under load, not a thermal soak, that's already covered
 // by the 5-minute compute stress test above.
 const FUR_TEST_DURATION: Duration = Duration::from_secs(45);
 
 // Undocumented, developer-only: `gpu-cert.exe --fast` runs all three tests
 // at durations short enough for a tight edit-rebuild-rerun loop while
-// debugging the client itself — long enough to still exercise multiple VRAM
+// debugging the client itself, long enough to still exercise multiple VRAM
 // passes and a real stress-telemetry series, short enough not to burn 16
 // minutes per iteration. Never advertised, never what the website's
-// download runs — a certificate produced this way isn't a real one.
+// download runs, a certificate produced this way isn't a real one.
 const FAST_STRESS_TEST_DURATION: Duration = Duration::from_secs(20);
 const FAST_VRAM_TEST_DURATION: Duration = Duration::from_secs(20);
 const FAST_FUR_TEST_DURATION: Duration = Duration::from_secs(10);
 
 // Console, not a GUI: the trust problem a GUI was meant to solve is now
-// handled upstream — you only get this exe by clicking "Test your GPU" on
+// handled upstream: you only get this exe by clicking "Test your GPU" on
 // the (logged-in) website, so the download itself is the trust signal, not
 // this window's appearance. That let the client go back to being a plain
 // pipe of println!s instead of carrying eframe/egui.
 //
 // Because it's a plain console app, double-clicking gpu-cert.exe from
 // Explorer runs it attached to a console window that Windows destroys the
-// instant the process exits — success or failure. Without an explicit pause,
+// instant the process exits, success or failure. Without an explicit pause,
 // any output (including error messages) flashes and vanishes before it can
 // be read. `main` stays a thin wrapper around `run` so every exit path
 // (early `?` returns, the happy path, and even a panic) goes through
@@ -119,7 +119,7 @@ fn pause_before_exit() {
 }
 
 fn run() -> anyhow::Result<()> {
-    println!("gpu-cert v{} — hardware verification client", env!("CARGO_PKG_VERSION"));
+    println!("gpu-cert v{}, hardware verification client", env!("CARGO_PKG_VERSION"));
 
     if std::env::args().any(|a| a == "--forget-account") {
         account::forget()?;
@@ -169,7 +169,7 @@ fn run() -> anyhow::Result<()> {
     // Asked here, after we know there's a working GPU to test but before the
     // ~16 minutes of load start. Asking afterwards would mean an unattended run
     // finishes, waits on a prompt nobody is sitting at, and files anonymously
-    // by default — the opposite of what the user chose.
+    // by default, the opposite of what the user chose.
     let upload_key = account::prompt_for_key();
 
     // Opened before any load is applied. The backend times the gap between
@@ -209,7 +209,7 @@ fn run() -> anyhow::Result<()> {
                 !unsafe_temp
             }
             // A transient telemetry read failure shouldn't itself abort a
-            // real test — keep going rather than false-trip the watchdog.
+            // real test, keep going rather than false-trip the watchdog.
             Err(_) => true,
         }
     })?;
@@ -316,7 +316,7 @@ fn print_progress(line: &str) {
 }
 
 /// Printed once, right before a test loop aborts because the watchdog
-/// tripped — see safety.rs. Aborting is still followed by a normal report
+/// tripped; see safety.rs. Aborting is still followed by a normal report
 /// submission: an early stop for an unsafe temperature is itself a
 /// meaningful, certifiable finding, not a run to just discard.
 fn print_abort_warning(temp_c: u32) {
@@ -328,7 +328,7 @@ fn print_abort_warning(temp_c: u32) {
 }
 
 /// Opens the report page so the seller lands back on the site to see (and,
-/// if logged in, claim) their result — the second half of the
+/// if logged in, claim) their result, the second half of the
 /// site → download → run → back-to-site loop this client is built around.
 #[cfg(target_os = "windows")]
 fn open_browser(url: &str) {

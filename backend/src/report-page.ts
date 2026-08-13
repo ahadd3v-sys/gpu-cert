@@ -1,8 +1,8 @@
 import type { ReportRow } from "../lib/db.js";
 import { esc } from "./html.js";
-import { FONT_FACE_CSS, TOKENS_CSS, renderEmblem } from "./theme.js";
+import { FONT_FACE_CSS, TOKENS_CSS, FAVICON_LINK, renderEmblem } from "./theme.js";
 
-// Hand-written HTML string, not JSX — this is a single static-shaped page
+// Hand-written HTML string, not JSX. This is a single static-shaped page
 // with no interactivity beyond the claim form, and skipping JSX means
 // skipping React as a runtime dependency entirely (see badge.ts for the
 // same reasoning on the image route).
@@ -12,7 +12,7 @@ import { FONT_FACE_CSS, TOKENS_CSS, renderEmblem } from "./theme.js";
 // since this page's whole job is to read as a credible, hard-to-fake
 // document to a stranger deciding whether to trust a GPU listing. It
 // commits to a single fixed "paper" look rather than following the
-// viewer's OS light/dark preference — a certificate isn't supposed to
+// viewer's OS light/dark preference, a certificate isn't supposed to
 // look different depending on who's viewing it.
 function formatBytes(bytes: number): string {
   const gb = bytes / 1024 ** 3;
@@ -132,7 +132,8 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(report.device_name)} — GPU Cert</title>
+<title>${esc(report.device_name)}, GPU Cert</title>
+${FAVICON_LINK}
 <style>
   ${FONT_FACE_CSS}
 
@@ -206,7 +207,7 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
   .eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mark); margin: 0 0 14px; }
   .device-name { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: clamp(28px, 5vw, 38px); line-height: 1.12; margin: 0 0 18px; text-wrap: balance; }
   /* 40ch, not 46: the seal is absolutely positioned into the hero's right
-     side, and at 46ch the centred statement ran under it — the last words of
+     side, and at 46ch the centred statement ran under it, the last words of
      two lines sat beneath the stamp. Narrowing the measure clears it without
      moving the seal off the corner where it belongs. */
   .statement { max-width: 40ch; margin: 0 auto; color: var(--ink-muted); font-size: 14.5px; line-height: 1.65; }
@@ -351,7 +352,7 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
         </div>
         <div class="protocol-block protocol-block-wide">
           <p class="protocol-name">Render Integrity Test</p>
-          <p class="protocol-method">Deterministic graphics-pipeline render, checked pixel-for-pixel against the expected output — catches rasterizer/shader-core defects the compute and VRAM tests can't see</p>
+          <p class="protocol-method">Deterministic graphics-pipeline render, checked pixel-for-pixel against the expected output, catches rasterizer/shader-core defects the compute and VRAM tests can't see</p>
           <dl class="protocol-results">
             <div><dt>Duration</dt><dd>${formatDuration(report.fur_duration_ms)}</dd></div>
             <div><dt>Frames rendered</dt><dd>${formatCount(report.fur_frames_rendered)}</dd></div>
@@ -368,7 +369,7 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
       <div>
         <p class="section-label">Cryptographic Signature</p>
         <p class="sig">${esc(sigTruncated)}</p>
-        <p class="footer-note">Ed25519 — <a href="/verify/${esc(certificateNumber(report.id))}">check this signature</a></p>
+        <p class="footer-note">Ed25519, <a href="/verify/${esc(certificateNumber(report.id))}">check this signature</a></p>
       </div>
       <div class="verify-block">
         <p class="footer-note">Verified ${formatTimestamp(report.created_at)}</p>

@@ -3,7 +3,7 @@ import { assessStressTest } from "./stress-analysis.js";
 import type { ReportRow } from "./db.js";
 
 // Field names match the Rust client's `serde`-serialized struct names
-// exactly (client/src/report.rs) — snake_case, no renaming on either side.
+// exactly (client/src/report.rs), snake_case, no renaming on either side.
 export const TelemetrySampleSchema = z.object({
   elapsed_ms: z.number().int().nonnegative(),
   temperature_c: z.number().int(),
@@ -58,7 +58,7 @@ export const CertifyRequestSchema = z.object({
     duration_ms: z.number().int().nonnegative(),
     aborted_for_safety: z.boolean(),
   }),
-  // Graphics-pipeline correctness/display-output check — see
+  // Graphics-pipeline correctness/display-output check, see
   // client/src/vulkan/fur_test.rs. The compute stress kernel never checks
   // its own output and never touches the rasterizer/ROP path; this does
   // both, by rendering a shader whose output is a deterministic function
@@ -80,7 +80,7 @@ export type Verdict = "Pass" | "Fail";
 
 export interface VerdictResult {
   verdict: Verdict;
-  // Human-readable, one per failing check, empty on Pass — this is what
+  // Human-readable, one per failing check, empty on Pass. This is what
   // the certificate page shows under "why this failed" so a Fail isn't
   // just an unexplained red badge.
   reasons: string[];
@@ -93,7 +93,7 @@ export interface VerdictResult {
 // mismatch is now unambiguous.
 //
 // This used to allow 1%, which was the right call when the render test
-// compared floating-point output against a CPU-recomputed reference — GPU and
+// compared floating-point output against a CPU-recomputed reference, GPU and
 // CPU float results legitimately differ, so some noise floor was unavoidable
 // and any threshold was really a guess about how much. That test has been
 // replaced by an exact integer comparison (see client/src/vulkan/fur_test.rs),
@@ -105,7 +105,7 @@ const FUR_MISMATCH_FAIL_FRACTION = 0;
 // Any VRAM pattern-test error is a fail, full stop, since that directly
 // indicates damaged/degraded memory cells (the whole reason this test
 // exists per the research doc). Stress-test telemetry (thermal throttling,
-// clock stability) used to be captured and stored but never scored — see
+// clock stability) used to be captured and stored but never scored, see
 // stress-analysis.ts for what changed and why those thresholds are
 // conservative pending real hardware data.
 export function computeVerdict(req: CertifyRequest): VerdictResult {
@@ -114,7 +114,7 @@ export function computeVerdict(req: CertifyRequest): VerdictResult {
   if (req.vram_test.total_errors > 0) {
     const errCount = req.vram_test.total_errors;
     reasons.push(
-      `${errCount.toLocaleString("en-US")} VRAM pattern-test error${errCount === 1 ? "" : "s"} detected — indicates damaged or degraded memory cells.`
+      `${errCount.toLocaleString("en-US")} VRAM pattern-test error${errCount === 1 ? "" : "s"} detected. This indicates damaged or degraded memory cells.`
     );
   }
 
@@ -122,22 +122,22 @@ export function computeVerdict(req: CertifyRequest): VerdictResult {
   reasons.push(...stress.reasons);
 
   // A safety-triggered abort stops a test early (see client/src/safety.rs)
-  // before hardware damage, but it's also itself a certifiable finding —
+  // before hardware damage, but it's also itself a certifiable finding:
   // a card that can't finish a standard test run without overheating is a
   // real defect, not a report that should just be discarded.
   if (req.stress_test.aborted_for_safety) {
-    reasons.push("Stress test stopped early because the GPU reached an unsafe temperature — indicates inadequate cooling.");
+    reasons.push("Stress test stopped early because the GPU reached an unsafe temperature. This indicates inadequate cooling.");
   }
   if (req.vram_test.aborted_for_safety) {
-    reasons.push("VRAM test stopped early because the GPU reached an unsafe temperature — indicates inadequate cooling.");
+    reasons.push("VRAM test stopped early because the GPU reached an unsafe temperature. This indicates inadequate cooling.");
   }
   if (req.fur_test.aborted_for_safety) {
-    reasons.push("Render integrity test stopped early because the GPU reached an unsafe temperature — indicates inadequate cooling.");
+    reasons.push("Render integrity test stopped early because the GPU reached an unsafe temperature. This indicates inadequate cooling.");
   }
 
   if (req.pcie_link_width_current < req.pcie_link_width_max) {
     reasons.push(
-      `PCIe link running at x${req.pcie_link_width_current} instead of its x${req.pcie_link_width_max} maximum — indicates a connector, slot, or riser cable issue.`
+      `PCIe link running at x${req.pcie_link_width_current} instead of its x${req.pcie_link_width_max} maximum. This indicates a connector, slot, or riser cable issue.`
     );
   }
 
@@ -145,7 +145,7 @@ export function computeVerdict(req: CertifyRequest): VerdictResult {
     const mismatchFraction = req.fur_test.mismatches / req.fur_test.pixels_checked;
     if (mismatchFraction > FUR_MISMATCH_FAIL_FRACTION) {
       reasons.push(
-        `Render integrity test found ${req.fur_test.mismatches.toLocaleString("en-US")} of ${req.fur_test.pixels_checked.toLocaleString("en-US")} pixels computed incorrectly under load — indicates a GPU compute or rendering defect.`
+        `Render integrity test found ${req.fur_test.mismatches.toLocaleString("en-US")} of ${req.fur_test.pixels_checked.toLocaleString("en-US")} pixels computed incorrectly under load. This indicates a GPU compute or rendering defect.`
       );
     }
   }
@@ -186,7 +186,7 @@ export interface CanonicalReport {
   created_at: string;
 }
 
-// Deterministic, fixed-key-order string for the signature to cover —
+// Deterministic, fixed-key-order string for the signature to cover:
 // intentionally not JSON.stringify(req) directly, since object key order
 // in JSON isn't guaranteed stable across serializers/re-parses, and the
 // signature must verify the same way every time this payload is checked.
@@ -242,7 +242,7 @@ export function canonicalReportString(id: string, req: CertifyRequest, result: V
 // stored, so a third party can re-derive it and check the signature.
 //
 // SQLite has no boolean type, so the flags come back as 0/1 and have to be
-// converted rather than passed through — `0` would serialize as `0`, not
+// converted rather than passed through, `0` would serialize as `0`, not
 // `false`, and the signature would never match. Numbers go through
 // `Number()` for the same class of reason: the driver may hand back a
 // BigInt for a large integer column, and `JSON.stringify` throws on those.

@@ -1,5 +1,5 @@
 //! Dynamic-load wrapper around NVIDIA's NVML (nvml.dll on Windows,
-//! libnvidia-ml.so on Linux — loaded by path here purely so this module can
+//! libnvidia-ml.so on Linux, loaded by path here purely so this module can
 //! `cargo check` cross-platform during development; the shipped client only
 //! ever runs on Windows).
 //!
@@ -10,7 +10,7 @@
 //! ECC/memory-error counters are intentionally NOT read here: they're
 //! unsupported on consumer GeForce cards (only enabled by default on
 //! Quadro/RTX PRO/datacenter parts), which is exactly why the Vulkan VRAM
-//! pattern test in `vulkan::vram_test` exists — NVML telemetry alone cannot
+//! pattern test in `vulkan::vram_test` exists, NVML telemetry alone cannot
 //! see mining-induced VRAM degradation on the cards this product targets.
 
 use libloading::{Library, Symbol};
@@ -138,13 +138,13 @@ pub struct GpuTelemetry {
     pub power_draw_mw: u32,
     pub graphics_clock_mhz: u32,
     pub memory_clock_mhz: u32,
-    /// GPU core utilization, 0-100. Not a stress-test result on its own —
+    /// GPU core utilization, 0-100. Not a stress-test result on its own:
     /// it's what "load" means when the GUI shows a live reading during the
-    /// test — but it's a real NVML value, not a derived/guessed number.
+    /// test, but it's a real NVML value, not a derived/guessed number.
     pub utilization_pct: u32,
     /// Current vs. max-supported PCIe lane width (e.g. 16 vs 16, or 8 vs
-    /// 16 for a degraded link). A card stuck below its max width — bent
-    /// connector, bad slot, damaged pins, riser cable fault — is a real
+    /// 16 for a degraded link). A card stuck below its max width, bent
+    /// connector, bad slot, damaged pins, riser cable fault, is a real
     /// resale-relevant defect that no compute/VRAM test would ever surface.
     pub pcie_link_width_current: u32,
     pub pcie_link_width_max: u32,
@@ -178,7 +178,7 @@ const NVML_CLOCK_MEM: c_uint = 2;
 impl Nvml {
     /// Loads nvml.dll from the driver's search path and resolves the
     /// handful of symbols this client needs. Returns an error (not a
-    /// panic) if the driver isn't present — an Nvidia card is not a
+    /// panic) if the driver isn't present, an Nvidia card is not a
     /// precondition for running the client, only for this code path.
     pub fn load() -> anyhow::Result<Self> {
         unsafe {
@@ -248,7 +248,7 @@ impl Nvml {
 
     /// Reads telemetry for GPU index 0. Multi-GPU handling (letting the
     /// user pick which card is being certified) is a product decision, not
-    /// a stack decision — deferred, see report.rs TODO.
+    /// a stack decision, deferred, see report.rs TODO.
     pub fn read_primary_gpu(&self) -> anyhow::Result<GpuTelemetry> {
         unsafe {
             let mut count: c_uint = 0;
@@ -407,7 +407,7 @@ mod tests {
     /// Pins `nvmlPciInfo_t`'s layout against nvml.h. These offsets are the
     /// difference between a correct hardware fingerprint and four bytes of
     /// ASCII bus-address text reinterpreted as an integer, and getting them
-    /// wrong produces no error at runtime on any card — the previous version
+    /// wrong produces no error at runtime on any card, the previous version
     /// of this struct shipped with a 32-byte leading buffer where the header
     /// has 16, and nothing anywhere would have caught it.
     #[test]

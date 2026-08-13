@@ -1,6 +1,6 @@
 # GPU Cert
 
-"Carfax for used GPUs" — a hardware verification certificate for GPUs sold P2P
+"Carfax for used GPUs", a hardware verification certificate for GPUs sold P2P
 (r/hardwareswap, Facebook Marketplace, OLX). Full scope: see the board doc and
 `hardware-verification-certificate-scope.md`.
 
@@ -9,20 +9,20 @@
 The site's live now: **https://gpu-cert.vercel.app**.
 
 The report page (`backend/src/report-page.ts`) is styled as an actual
-certificate rather than a plain results screen — masthead, GPU spec table,
+certificate rather than a plain results screen: masthead, GPU spec table,
 verification protocol section, ink-stamp seal. Palette and type across the
 whole site (`backend/src/theme.ts`) are anurfi.net's own tokens, reused
 directly rather than reinvented, so GPU Cert reads as the same issuing
 body's family rather than a one-off identity. Screenshot gallery of the
 redesign (mock data): **https://claude.ai/code/artifact/cbca434f-8a03-4e15-9e40-0045c12a1e8a**
-(private artifact tied to Ahad's claude.ai account — share it from the page's
+(private artifact tied to Ahad's claude.ai account; share it from the page's
 share menu if someone else needs the link). The older Fraunces/navy preview
 link is stale.
 
 ## Product scope
 
 Scoped deliberately to the certificate use case, not a general diagnostic
-suite (there's no shortage of those — FurMark, OCCT, GpuMemTest — and we're
+suite (there's no shortage of those: FurMark, OCCT, GpuMemTest, and we're
 not trying to out-feature them). The thing nobody else in the P2P resale
 space offers is a report a stranger can independently verify: signed
 server-side, bound to a specific card's fingerprint, hosted at a public URL.
@@ -36,7 +36,7 @@ from the site, run it, and it submits its report and opens your browser to
 the finished certificate. That certificate is public at its own URL whether
 or not anyone ever signs up.
 
-An account is purely additive, and there are two ways into one — again
+An account is purely additive, and there are two ways into one, again
 mirroring Geekbench, where you can either connect the app to your account or
 attach an already-uploaded result afterwards:
 
@@ -65,18 +65,18 @@ signup a prerequisite to testing a card.
 
 ## Layout
 
-- `client/` — Rust Windows console app. Reads NVML/ADL telemetry, computes a
+- `client/`: Rust Windows console app. Reads NVML/ADL telemetry, computes a
   hardware fingerprint, runs three tests (compute stress, VRAM pattern,
-  render integrity — see below), checks PCIe link width, and submits a
+  render integrity; see below), checks PCIe link width, and submits a
   signed report request to the backend.
-- `backend/` — Hono app on Vercel (Turso for storage). Accounts
+- `backend/`: Hono app on Vercel (Turso for storage). Accounts
   (signup/login, JWT session cookie), ingests reports from the exe (bearer
   upload key optional, no browser session), lets a logged-in viewer claim an
   unowned report, serves the public `/r/:reportId` certificate and shareable
   badge image, a `/verify` surface (see below), and a `/dashboard` that is
   both the register of a user's certificates and where their upload key
   lives.
-- `backend/src/theme.ts` — the shared visual language: palette tokens, the
+- `backend/src/theme.ts`: the shared visual language, covering palette tokens, the
   embedded Fraunces face, the letterhead masthead, and the page shell. Both
   `report-page.ts` and `pages.ts` import from here, so the palette is defined
   once.
@@ -129,16 +129,16 @@ the certificate is for.
 
 ## Verification protocol
 
-Three tests, each documented and scored — see `backend/lib/certify.ts`
+Three tests, each documented and scored; see `backend/lib/certify.ts`
 (`computeVerdict`) for exactly what fails a card and why:
 
-- **Stress test** (`client/src/vulkan/stress.rs`) — sustained compute load
+- **Stress test** (`client/src/vulkan/stress.rs`): sustained compute load
   via a hand-written Vulkan kernel. Telemetry (temp, clocks) is scored by
   `backend/lib/stress-analysis.ts` for over-temperature, failure to
   thermally stabilize, and excessive/unstable clock throttling.
-- **VRAM pattern test** (`client/src/vulkan/vram_test.rs`) — bit-pattern
+- **VRAM pattern test** (`client/src/vulkan/vram_test.rs`): bit-pattern
   write/verify sweep across active VRAM (memtest_vulkan-derived). Any error
-  is a fail, full stop — this is the core "mining damage" detector.
+  is a fail, full stop. This is the core "mining damage" detector.
 
   The tested region is split into several buffers, each sized at runtime to
   `min(maxStorageBufferRange, maxMemoryAllocationSize, heap size, 1 GiB)`.
@@ -159,7 +159,7 @@ Three tests, each documented and scored — see `backend/lib/certify.ts`
   Coverage is printed as a percentage during the run and shown on the
   certificate, because "0 errors" over 49% of a card is a materially weaker
   claim than over 85% and the certificate should not blur the two.
-- **Render integrity test** (`client/src/vulkan/fur_test.rs`) — renders a
+- **Render integrity test** (`client/src/vulkan/fur_test.rs`): renders a
   deterministic fullscreen fragment shader and compares **every pixel of
   every frame**, bit for bit, against a CPU-computed reference. Catches
   compute/rasterizer defects the other two tests can't see (neither of them
@@ -179,7 +179,7 @@ Three tests, each documented and scored — see `backend/lib/certify.ts`
   thing on every GPU instead of being calibrated to one. The attachment is
   `VK_FORMAT_R32_UINT`, which carries mandatory `COLOR_ATTACHMENT_BIT`
   support in the spec, so this is portable rather than hardware-specific.
-- **PCIe link width** (via NVML) — current vs. max-supported lane width; a
+- **PCIe link width** (via NVML): current vs. max-supported lane width; a
   degraded link (bad slot/connector/riser) fails with a specific reason.
 
 All three sustained-load tests share a safety watchdog (`client/src/safety.rs`):
@@ -192,7 +192,7 @@ certifiable finding (shown under "Why This Failed"), not a discarded one.
 See the board doc "GPU Cert: stack + architecture decision" for full
 rationale. Summary: Rust + `ash` (raw Vulkan) + `libloading` (dynamic NVML)
 + ADL (not ADLX) for AMD + hand-written SPIR-V shaders compiled at build
-time via `naga` (pure Rust, not `shaderc` — avoids a CMake-built
+time via `naga` (pure Rust, not `shaderc`, avoids a CMake-built
 glslang/shaderc toolchain dependency). Most shaders are GLSL; the VRAM test
 shader is WGSL specifically because naga's GLSL front-end has no atomic op
 support, needed there for the shared error counter.
@@ -213,8 +213,8 @@ and letterhead masthead, all shared from `theme.ts`. Like the certificate they
 commit to one fixed light treatment instead of following the viewer's
 light/dark preference. Two structural choices worth keeping:
 
-- The dashboard is a **register** — a ledger table keyed by certificate
-  number, not a card grid — because a certificate number is how you refer to
+- The dashboard is a **register**: a ledger table keyed by certificate
+  number, not a card grid, because a certificate number is how you refer to
   one of these documents.
 - The home page's "how it works" list is numbered and the three tests are
   not. The steps are genuinely sequential; the tests run as a set with no
@@ -230,9 +230,9 @@ actually be verified here vs. what's still gated on real hardware:
   transitively via `reqwest`'s `rustls-tls` feature, needs `lib.exe` from a
   real MSVC toolchain that isn't installable here). But
   `cargo build --release --target x86_64-pc-windows-gnu` (with
-  `gcc-mingw-w64-x86-64` installed) builds and links cleanly — a real
+  `gcc-mingw-w64-x86-64` installed) builds and links cleanly, a real
   PE32+ Windows console exe, 3.8 MB release / stripped. This is the target
-  to ship from. Still unverified: whether it actually *runs* correctly —
+  to ship from. Still unverified: whether it actually *runs* correctly:
   no real Windows machine or GPU here to test against.
 - **Resolved: the client's unit tests run.** A native `cc` is present now, so
   `cargo test` links and passes (7 tests). The backend has its own checks:
@@ -240,50 +240,50 @@ actually be verified here vs. what's still gated on real hardware:
   `npm run smoke` (boots the server against a throwaway DB and exercises
   ingest, the certificate page, verification, the badge and the redirect
   guard end to end, 19 assertions).
-- **NVML/ADL/Vulkan can't be exercised at all here** — no real driver, GPU,
+- **NVML/ADL/Vulkan can't be exercised at all here**: no real driver, GPU,
   or Windows Vulkan ICD in this dev environment. `cargo check`/`cargo build`
   (native Linux target) and the shader→SPIR-V build step both pass, and the
   no-GPU error path was confirmed to fail cleanly, but none of the actual
   hardware-facing code paths have run against real hardware. This applies
   in full to `fur_test.rs`'s graphics pipeline (render pass, framebuffer,
-  readback) — it's the newest and most complex Vulkan code in the client,
+  readback), it's the newest and most complex Vulkan code in the client,
   and the least proven.
 - **AMD support (`client/src/adl.rs`) is wired in but unverified against
   real hardware.** `main.rs` tries NVML first, falls back to ADL2-based
   telemetry (`ADL2_New_QueryPMLogData_Get`) for AMD. Struct layouts and
   sensor IDs are ground-truthed against AMD's public ADL SDK
   (GPUOpen-LibrariesAndSDKs/display-library) and cross-checked against
-  hashcat's `ext_ADL.c`, not hand-typed from memory — but this is still the
+  hashcat's `ext_ADL.c`, not hand-typed from memory, but this is still the
   first real run, not a confirmed-working path. Known limitation, not a
   bug: ADL has no verified call for a card's true *max* PCIe lane count
   (only current), so `pcie_link_width_current`/`_max` are reported equal
-  for AMD — the degraded-slot check doesn't work yet on AMD, deliberately,
+  for AMD, the degraded-slot check doesn't work yet on AMD, deliberately,
   rather than risk a hardcoded max false-failing a card that's electrically
   narrower than x16 by design (the RX 6600 non-XT, this project's own AMD
   test card, is x8).
 - The 100°C safety-watchdog threshold (`safety.rs`) and the stress-telemetry
   scoring thresholds (`stress-analysis.ts`) are both conservative estimates,
-  not calibrated against real GPU behavior — there's been no real hardware
+  not calibrated against real GPU behavior, there's been no real hardware
   run yet to validate them against.
 - **Resolved:** the exe is hosted and downloadable. `pages.ts`'s "Test your
   GPU" points at
   `ahadd3v-sys/gpu-cert/releases/latest/download/gpu-cert.exe`, which now
-  resolves — `v0.1.1` is cut and the repo is public (release assets on a
+  resolves, `v0.1.1` is cut and the repo is public (release assets on a
   private repo 404 for anyone unauthenticated, which is everyone visiting
   the site; making the repo public was also the deliberate call for the
   product's own trust story, not just a distribution fix). Ships unsigned
   still (no code-signing budget yet), so Windows SmartScreen will likely
   flag it on first run.
-- **Resolved:** the backend is live at `https://gpu-cert.vercel.app` — real
+- **Resolved:** the backend is live at `https://gpu-cert.vercel.app`: real
   Turso DB (`gpu-cert` in a new `gpu-cert-us` group, `aws-us-east-1`, paired
   with the Vercel function's `iad1` region for a short DB hop), a real
   Ed25519 signing key, and all other production secrets are provisioned and
-  set (see `~/.secrets/gpu-cert production` for the values — the signing key
+  set (see `~/.secrets/gpu-cert production` for the values, the signing key
   especially has no recovery if lost). Verified end-to-end against the live
   deployment: signup, login, logout, dashboard, upload-key report
   attribution, and claim-after-fact all round-trip correctly. This also
   means `client/src/report.rs`'s hardcoded `BACKEND_BASE_URL` now points at
-  a real, working backend — the exe has somewhere to actually submit to
+  a real, working backend, the exe has somewhere to actually submit to
   once it's built and run.
 
 ## Real-hardware findings

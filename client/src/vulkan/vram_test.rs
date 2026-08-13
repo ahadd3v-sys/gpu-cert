@@ -1,10 +1,10 @@
-//! Active VRAM pattern test — fill DEVICE_LOCAL memory with a deterministic
+//! Active VRAM pattern test, fill DEVICE_LOCAL memory with a deterministic
 //! per-address pattern, then verify it, counting mismatches. Ported
 //! conceptually from GpuZelenograd/memtest_vulkan (zlib license). This is
 //! the only way to catch mining-induced GDDR6/GDDR6X degradation: NVML/ADLX
 //! telemetry cannot see it since real ECC isn't exposed on consumer cards
 //! (see the research doc). Run for 10+ minutes across multiple passes with
-//! varying seeds/offsets for a real signal — a single fill/verify pass
+//! varying seeds/offsets for a real signal, a single fill/verify pass
 //! mainly catches gross failures, not marginal cells.
 
 use ash::vk;
@@ -50,7 +50,7 @@ pub struct VramTestResult {
     pub bytes_tested: u64,
     pub duration: Duration,
     /// True if `on_pass`'s temperature watchdog tripped and the loop
-    /// stopped before `min_duration` elapsed — see safety.rs.
+    /// stopped before `min_duration` elapsed; see safety.rs.
     pub aborted_for_safety: bool,
 }
 
@@ -58,7 +58,7 @@ pub struct VramTestResult {
 /// across several buffers rather than allocated as one: a storage buffer's
 /// bindable range is capped at `maxStorageBufferRange` (a `uint32_t`, so
 /// never more than 4 GiB-1 on any device ever), and a single allocation is
-/// capped at `maxMemoryAllocationSize` — 3.5 GiB on an RX 6600 with 8 GiB of
+/// capped at `maxMemoryAllocationSize`, 3.5 GiB on an RX 6600 with 8 GiB of
 /// VRAM. Neither limit reports a clean failure when exceeded; the range
 /// simply truncates and everything past it silently reads back as zero.
 struct Segment {
@@ -72,7 +72,7 @@ struct Segment {
 /// `min_duration` has elapsed, varying the seed each pass so repeated runs
 /// don't alias onto the same addresses in the same order. `on_pass` is
 /// invoked after every fill+verify pass with the running (passes_run,
-/// total_errors, elapsed) so far, mirroring stress::run's on_tick — this is
+/// total_errors, elapsed) so far, mirroring stress::run's on_tick. This is
 /// what drives the live progress line during a 10-minute test.
 ///
 /// Every segment is filled before any segment is verified, rather than
@@ -97,7 +97,7 @@ pub fn run(
         ctx.host_visible_memory_type,
     )?;
     // Diagnostic-only (idx, actual, expected) for the first mismatch a pass
-    // finds — see the shader for why this is worth the extra buffer.
+    // finds; see the shader for why this is worth the extra buffer.
     let first_mismatch_buffer = GpuBuffer::new(
         ctx,
         12,
@@ -113,7 +113,7 @@ pub fn run(
     )?;
 
     if ctx.max_compute_workgroups_x == 0 {
-        anyhow::bail!("driver reports maxComputeWorkGroupCount[0] = 0 — can't dispatch anything");
+        anyhow::bail!("driver reports maxComputeWorkGroupCount[0] = 0, can't dispatch anything");
     }
     let max_workgroups_per_dispatch = ctx.max_compute_workgroups_x.min(DISPATCH_CHUNK_WORKGROUPS);
     let max_elements_per_dispatch = max_workgroups_per_dispatch.saturating_mul(WORKGROUP_SIZE);
@@ -164,7 +164,7 @@ pub fn run(
         // within `max_elements_per_dispatch`. `offset` is the element index
         // inside this segment's own buffer, so the shader indexes from zero
         // per segment and never needs an index wider than the buffer it is
-        // bound to — which is what keeps this correct on a 48 GB card, where
+        // bound to, which is what keeps this correct on a 48 GB card, where
         // a single global element index would overflow the u32 the shader
         // uses.
         let dispatch_segment = |mode: u32, seg: &Segment, seg_seed: u32| -> anyhow::Result<()> {
@@ -292,7 +292,7 @@ fn allocate_segments(
     // still allocate right now, which is the only figure that reflects that.
     //
     // Without it the fallback is to allocate until something fails, which
-    // systematically *understates* coverage — the first refusal ends the
+    // systematically *understates* coverage, the first refusal ends the
     // loop well before the real ceiling. On an 8 GB RX 6600 with a desktop
     // running, that stopped at 4032 MB (49% of the card) when far more was
     // actually available.
@@ -366,7 +366,7 @@ fn allocate_segments(
 fn finish_segments(segments: Vec<Segment>) -> anyhow::Result<Vec<Segment>> {
     if segments.is_empty() {
         anyhow::bail!(
-            "couldn't allocate any device-local memory to test — close other GPU applications and \
+            "couldn't allocate any device-local memory to test, close other GPU applications and \
              try again"
         );
     }

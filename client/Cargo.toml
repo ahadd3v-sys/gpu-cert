@@ -2,14 +2,14 @@
 name = "gpu-cert"
 version = "0.4.0"
 edition = "2024"
-description = "GPU hardware verification client — telemetry, stress test, VRAM pattern test, fingerprint"
+description = "GPU hardware verification client, telemetry, stress test, VRAM pattern test, fingerprint"
 
 [[bin]]
 name = "gpu-cert"
 path = "src/main.rs"
 
 [dependencies]
-# Raw Vulkan bindings — needs buffer-level control for the VRAM pattern test
+# Raw Vulkan bindings, needs buffer-level control for the VRAM pattern test
 # and the custom stress kernels, which wgpu's abstraction would hide.
 ash = "0.38"
 
@@ -22,7 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # HTTP client for submitting the report to the backend. rustls (not the
-# native-tls default) so the build doesn't depend on a system OpenSSL —
+# native-tls default) so the build doesn't depend on a system OpenSSL:
 # neither this Linux dev box nor a bare Windows target machine can be
 # relied on to have OpenSSL headers/libs available.
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }

@@ -1,4 +1,4 @@
-//! AMD Display Library (ADL) bindings — the legacy C-ABI API, chosen over
+//! AMD Display Library (ADL) bindings, the legacy C-ABI API, chosen over
 //! ADLX for Phase 1 specifically to avoid writing a C++ shim just to get a
 //! callable FFI surface from Rust (see the board's stack decision doc).
 //! Windows-only: ADL ships as atiadlxx.dll (64-bit) alongside the AMD
@@ -8,13 +8,13 @@
 //! public ADL SDK (github.com/GPUOpen-LibrariesAndSDKs/display-library,
 //! adl_defines.h / adl_structures.h) and cross-checked against hashcat's
 //! `ext_ADL.h`/`ext_ADL.c`, which calls this exact sensor API against real
-//! AMD hardware in the wild — not hand-typed from memory, since a wrong
+//! AMD hardware in the wild, not hand-typed from memory, since a wrong
 //! struct layout here risks silently reading the *wrong* physical quantity
 //! with total confidence, which is worse for a certificate product than a
 //! clean failure.
 //!
 //! Uses the ADL2 (context-handle) API throughout rather than the older
-//! global-state ADL1 API — thread-safe and the modern convention, and every
+//! global-state ADL1 API, thread-safe and the modern convention, and every
 //! ADL2 call is just its ADL1 equivalent with a context handle prepended,
 //! so nothing here trades away confidence for that switch.
 //!
@@ -28,7 +28,7 @@
 //!
 //! Known limitation: ADL has no verified call for a card's true *maximum*
 //! PCIe lane count (only the live/current lane count, via the
-//! `ADL_PMLOG_BUS_LANES` sensor). Hardcoding an assumed max — e.g. "16" —
+//! `ADL_PMLOG_BUS_LANES` sensor). Hardcoding an assumed max, e.g. "16":
 //! would be actively wrong for at least one card this project's own
 //! developer tests on: the RX 6600 (non-XT) is physically/electrically an
 //! x8 card, not x16. So `pcie_link_width_current` and `_max` are reported
@@ -47,16 +47,16 @@ const ADL_LIB_NAME: &str = "atiadlxx.dll";
 const ADL_OK: c_int = 0;
 const ADL_MAX_PATH: usize = 256;
 const ADL_PMLOG_MAX_SENSORS: usize = 256;
-// PCI-SIG vendor ID for AMD/ATI is the hex value 0x1002 — but confirmed via
+// PCI-SIG vendor ID for AMD/ATI is the hex value 0x1002, but confirmed via
 // a real ADL adapter dump that AdapterInfo.iVendorID reports it as the
 // *decimal* number 1002 (prints as 0x03ea in hex), not the hex value 0x1002
 // itself. Comparing against 0x1002 silently matched nothing on real
-// hardware — every adapter (11 of them, all genuinely AMD) got filtered out
+// hardware, every adapter (11 of them, all genuinely AMD) got filtered out
 // as "not AMD."
 const AMD_VENDOR_ID: c_int = 1002;
 
 // ADL_PMLOG_SENSORS enum values (adl_defines.h). The sensors array in
-// ADLPMLogDataOutput is indexed directly by these — not searched.
+// ADLPMLogDataOutput is indexed directly by these, not searched.
 const PMLOG_CLK_GFXCLK: usize = 1;
 const PMLOG_CLK_MEMCLK: usize = 2;
 const PMLOG_TEMPERATURE_EDGE: usize = 8;
@@ -189,7 +189,7 @@ fn cstr_field(buf: &[c_char]) -> String {
 
 /// AMD ADL exposes the PCI device ID via the Windows PnP device instance
 /// string (`PCI\VEN_1002&DEV_73FF&SUBSYS_...`), not as a plain integer
-/// field the way NVML does — parsed out here rather than guessing another
+/// field the way NVML does, parsed out here rather than guessing another
 /// ADL call for it.
 fn parse_pci_device_id(pnp_string: &str) -> Option<u32> {
     let idx = pnp_string.find("DEV_")?;
@@ -206,7 +206,7 @@ pub struct Adl {
     adapter_memory_info2_get: Symbol<'static, unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlMemoryInfo2) -> c_int>,
     // Optional, not required: not every driver version exports this ADL2
     // wrapper (confirmed missing on at least one real RX 6600 system), and
-    // VBIOS is fingerprint-quality-only, not safety- or verdict-critical —
+    // VBIOS is fingerprint-quality-only, not safety- or verdict-critical:
     // a missing symbol here shouldn't take down the whole ADL path the way
     // a missing PMLog or adapter-enumeration symbol should.
     adapter_vbios_info_get: Option<Symbol<'static, unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlBiosInfo) -> c_int>>,
@@ -217,7 +217,7 @@ pub struct Adl {
 impl Adl {
     /// Loads atiadlxx.dll, creates an ADL2 context, and picks the first
     /// present AMD adapter. Returns an error (not a panic) if there's no AMD
-    /// driver or no AMD adapter — matching `Nvml::load`, an AMD card is not
+    /// driver or no AMD adapter, matching `Nvml::load`, an AMD card is not
     /// a precondition for running the client, only for this path.
     pub fn load() -> anyhow::Result<Self> {
         unsafe {
@@ -233,7 +233,7 @@ impl Adl {
                 };
             }
             // Same lookup, but a missing symbol degrades to `None` instead
-            // of aborting `load()` — for optional, non-safety-critical data.
+            // of aborting `load()`, for optional, non-safety-critical data.
             macro_rules! opt_sym {
                 ($name:literal, $ty:ty) => {
                     lib.get::<$ty>($name)
@@ -264,7 +264,7 @@ impl Adl {
                 unsafe extern "C" fn(AdlContextHandle, c_int, *mut AdlBiosInfo) -> c_int
             );
             if adapter_vbios_info_get.is_none() {
-                println!("(ADL2_Adapter_VBIOSInfo_Get not available on this driver — VBIOS version will report as \"unknown\")");
+                println!("(ADL2_Adapter_VBIOSInfo_Get not available on this driver, VBIOS version will report as \"unknown\")");
             }
             let new_query_pmlog_data_get = sym!(
                 b"ADL2_New_QueryPMLogData_Get\0",
@@ -297,7 +297,7 @@ impl Adl {
 
             // Deliberately NOT gated on ADL_Adapter_Active_Get: "active"
             // there tracks display-output/Eyefinity topology state, not
-            // whether the ASIC itself is present and queryable — a
+            // whether the ASIC itself is present and queryable, a
             // perfectly normal single-monitor desktop card can read back
             // inactive depending on which adapter entry ADL considers to
             // own the active display path. GPU-Z and similar tools don't
@@ -305,12 +305,12 @@ impl Adl {
             //
             // A real system can enumerate many AMD "adapter" entries for
             // one physical GPU (one per display head/output path) plus a
-            // separate entry for an integrated APU, if present — confirmed
+            // separate entry for an integrated APU, if present, confirmed
             // on real hardware: 11 entries for a single discrete card. The
             // first present+AMD match isn't reliable, so instead: rank
             // every candidate by reported VRAM (a discrete card reports
             // far more than an iGPU) and take the first one, in that order,
-            // that actually answers a live PMLog temperature query — the
+            // that actually answers a live PMLog temperature query, the
             // same read the safety watchdog depends on every tick, so an
             // adapter entry that can't answer it isn't usable here even if
             // it otherwise looks like the right card.
@@ -353,7 +353,7 @@ impl Adl {
                     let _ = main_control_destroy(context);
                     anyhow::bail!(
                         "found {} AMD adapter candidate(s) among {count} ADL adapter(s), but none answered \
-                         a live temperature query — see the adapter list printed above",
+                         a live temperature query; see the adapter list printed above",
                         candidates.len()
                     );
                 }
@@ -413,7 +413,7 @@ impl Adl {
                     if f(self.context, self.adapter_index, &mut bios) == ADL_OK {
                         cstr_field(&bios.version)
                     } else {
-                        // Not safety-critical, only fingerprint quality —
+                        // Not safety-critical, only fingerprint quality:
                         // degrade rather than fail the whole read over this.
                         String::from("unknown")
                     }
@@ -437,17 +437,17 @@ impl Adl {
             };
 
             // Temperature is safety-critical (the stress-test watchdog needs
-            // it every tick to abort on overheat) — refuse to proceed rather
+            // it every tick to abort on overheat), refuse to proceed rather
             // than silently run a load test with no thermal safety net.
             let temperature_c = sensor(PMLOG_TEMPERATURE_EDGE).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "GPU temperature sensor not supported/reported by this card — refusing to run \
+                    "GPU temperature sensor not supported/reported by this card, refusing to run \
                      without a working safety watchdog. Please report this (device: {name})."
                 )
             })?;
             if !(0..=150).contains(&temperature_c) {
                 anyhow::bail!(
-                    "GPU temperature sensor returned an implausible reading ({temperature_c}°C) — \
+                    "GPU temperature sensor returned an implausible reading ({temperature_c}°C), \
                      treating it as unreliable rather than trusting it."
                 );
             }

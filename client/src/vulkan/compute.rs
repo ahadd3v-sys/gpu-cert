@@ -132,7 +132,7 @@ impl ComputeKernel {
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(buffer_count)];
             // FREE_DESCRIPTOR_SET is required for `dispatch`'s per-call
-            // free_descriptor_sets to actually do anything — without it,
+            // free_descriptor_sets to actually do anything, without it,
             // freeing is a spec-defined no-op (drivers vary on whether they
             // even error on the attempt), so with max_sets(1) the pool
             // silently permanently exhausts after exactly one dispatch:
@@ -167,7 +167,7 @@ impl ComputeKernel {
 
     /// Binds `buffers` to sequential descriptor bindings, dispatches
     /// `workgroups` groups with `push_constants` bytes pushed, and blocks
-    /// until the GPU finishes. One-shot by design — stress test duration is
+    /// until the GPU finishes. One-shot by design, stress test duration is
     /// controlled by looping `dispatch` calls, not by a single long dispatch,
     /// so it can be interrupted between iterations.
     pub fn dispatch(
@@ -247,7 +247,7 @@ impl ComputeKernel {
             // Makes every shader write from previously submitted dispatches
             // available and visible to this one. Waiting on the previous
             // dispatch's fence only guarantees execution finished, not that
-            // its writes left the caches — Vulkan requires an explicit memory
+            // its writes left the caches, Vulkan requires an explicit memory
             // dependency for that, and a barrier's first synchronization
             // scope covers all commands earlier in submission order, which
             // includes prior submits on this queue.
@@ -329,7 +329,7 @@ impl Drop for ComputeKernel {
         // enforced by construction (ComputeKernel::new borrows &VulkanContext,
         // and callers hold ctx for the kernel's whole lifetime).
         // Cleanup happens via explicit `destroy(ctx)` since Drop can't take
-        // the context it needs — see call sites in stress.rs / vram_test.rs.
+        // the context it needs; see call sites in stress.rs / vram_test.rs.
     }
 }
 

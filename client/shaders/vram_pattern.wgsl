@@ -1,7 +1,7 @@
 // VRAM pattern fill/verify, ported conceptually from GpuZelenograd/memtest_vulkan
 // (zlib license). Consumer GDDR6/GDDR6X has no real ECC exposed via
 // NVML/ADLX, so mining-induced memory degradation is invisible to telemetry
-// alone — this shader is the active test that actually catches it.
+// alone. This shader is the active test that actually catches it.
 //
 // Two entry points selected by `pc.mode`:
 //   0 = fill:   write a deterministic pattern derived from the address
@@ -10,7 +10,7 @@
 //
 // Run fill and verify as separate dispatches (with a pipeline barrier /
 // fence between them) so writes are guaranteed flushed to VRAM before
-// verify reads them back — a false "pass" from GPU cache is the failure
+// verify reads them back, a false "pass" from GPU cache is the failure
 // mode this test exists to rule out.
 //
 // WGSL, not GLSL: naga 24's GLSL front-end has no atomic function support
@@ -40,7 +40,7 @@ var<storage, read_write> error_count: atomic<u32>;
 // Diagnostic only, not part of the pass/fail signal: (idx, actual, expected)
 // for whichever mismatch happens to win the race to be "first" this verify
 // dispatch. Lets the host print a concrete example instead of just a raw
-// count — the difference between "the pattern-generation logic itself is
+// count, the difference between "the pattern-generation logic itself is
 // wrong" (every mismatch looks related to idx/seed in a consistent way) and
 // "this address is really bad" (one-off, unrelated to any encoding bug) is
 // invisible from a bare error count alone.

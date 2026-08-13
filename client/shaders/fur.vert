@@ -1,6 +1,6 @@
 #version 450
 
-// Fullscreen triangle, no vertex buffer needed — standard trick to drive a
+// Fullscreen triangle, no vertex buffer needed, standard trick to drive a
 // fragment-shader-bound graphics load test.
 vec2 positions[3] = vec2[](
     vec2(-1.0, -1.0),

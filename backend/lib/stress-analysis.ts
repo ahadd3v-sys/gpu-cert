@@ -2,11 +2,11 @@ import type { TelemetrySample } from "./certify.js";
 
 // Turns the raw per-tick telemetry series from the stress test into a
 // pass/fail-relevant assessment. Previously this telemetry was captured and
-// stored but never scored — a card that throttled hard or had an unstable
+// stored but never scored, a card that throttled hard or had an unstable
 // power delivery system still passed outright as long as VRAM came back
 // clean. These thresholds are deliberately conservative (biased toward not
 // failing a healthy card) since they're picked from general GPU thermal/
-// power-limit behavior, not from real hardware runs — this dev environment
+// power-limit behavior, not from real hardware runs. This dev environment
 // has no real GPU to calibrate against. Revisit once there's telemetry from
 // an actual Windows/GPU test run.
 export interface StressAssessment {
@@ -36,7 +36,7 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
   const peakTempC = series.length > 0 ? Math.max(...series.map((s) => s.temperature_c)) : 0;
 
   // Too few samples to say anything meaningful about trends (a very short
-  // test, or a client that failed to sample telemetry) — don't fail a card
+  // test, or a client that failed to sample telemetry), don't fail a card
   // over a data-collection gap, just skip the trend-based checks.
   if (series.length < MIN_SAMPLES_FOR_ANALYSIS || durationMs <= 0) {
     return { peakTempC, thermallyStable: true, clockStabilityPct: 0, reasons: [] };
@@ -46,7 +46,7 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
 
   if (peakTempC >= OVER_TEMP_C) {
     reasons.push(
-      `GPU reached ${peakTempC}°C during the stress test, at or above the safe operating ceiling for consumer GPUs — indicates inadequate cooling.`
+      `GPU reached ${peakTempC}°C during the stress test, at or above the safe operating ceiling for consumer GPUs. This indicates inadequate cooling.`
     );
   }
 
@@ -61,7 +61,7 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
       : average(lastWindow.map((s) => s.temperature_c)) - average(priorWindow.map((s) => s.temperature_c)) <=
         THERMAL_CLIMB_TOLERANCE_C;
   if (!thermallyStable) {
-    reasons.push("GPU temperature was still climbing at the end of the stress test instead of stabilizing — indicates inadequate cooling.");
+    reasons.push("GPU temperature was still climbing at the end of the stress test instead of stabilizing. This indicates inadequate cooling.");
   }
 
   // Clock throttle magnitude: some clock reduction under sustained full
@@ -76,7 +76,7 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
     clockDropPct = earlyAvg > 0 ? ((earlyAvg - lateAvg) / earlyAvg) * 100 : 0;
     if (clockDropPct > CLOCK_DROP_FAIL_PCT) {
       reasons.push(
-        `GPU core clock dropped ${clockDropPct.toFixed(0)}% under sustained load, beyond typical power-limit throttling — indicates thermal or power delivery issues.`
+        `GPU core clock dropped ${clockDropPct.toFixed(0)}% under sustained load, beyond typical power-limit throttling. This indicates thermal or power delivery issues.`
       );
     }
   }
@@ -94,7 +94,7 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
     clockStabilityPct = mean > 0 ? (stdDev / mean) * 100 : 0;
     if (clockStabilityPct > CLOCK_INSTABILITY_FAIL_PCT) {
       reasons.push(
-        `GPU clock speed was unstable during the test (±${clockStabilityPct.toFixed(1)}% variation) — consistent with a power delivery issue.`
+        `GPU clock speed was unstable during the test (±${clockStabilityPct.toFixed(1)}% variation), consistent with a power delivery issue.`
       );
     }
   }

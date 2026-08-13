@@ -1,7 +1,7 @@
 //! Anti-tamper hardware fingerprint: binds a report to the tuple of UUID,
 //! PCI device ID, VRAM size and VBIOS version rather than any single field.
 //! Per the research doc, UUID alone is driver-reported and spoofable, and
-//! serial number support is weak-to-absent on consumer cards — a 4-field
+//! serial number support is weak-to-absent on consumer cards, a 4-field
 //! tuple is harder to spoof consistently while still being cheap to compute
 //! client-side. This does not claim to be tamper-proof, only harder to fake
 //! than a single field (see the scope doc's honest framing on this).

@@ -1,6 +1,6 @@
 //! Builds the report payload and POSTs it to the backend's `/api/certify`
 //! ingest endpoint. The backend (not the client) holds the Ed25519 signing
-//! key and is the source of truth for the signed report — this module's
+//! key and is the source of truth for the signed report. This module's
 //! job is just to package raw results faithfully, not to make any
 //! certification judgment itself.
 
@@ -104,12 +104,12 @@ pub struct CertifyResponse {
     /// which is a normal outcome, not an error.
     pub filed_to: Option<String>,
     /// `Some(false)` specifically means a key was sent and the backend did not
-    /// recognize it — worth telling the user, since they typed it in. `None`
+    /// recognize it, worth telling the user, since they typed it in. `None`
     /// means no key was sent at all.
     pub upload_key_recognized: Option<bool>,
 }
 
-/// Backend base URL — hardcoded to production for now since there's no
+/// Backend base URL, hardcoded to production for now since there's no
 /// staging environment yet. Revisit if/when the backend gets a staging
 /// deploy worth pointing the client at during development.
 const BACKEND_BASE_URL: &str = "https://gpu-cert.vercel.app";
@@ -222,7 +222,7 @@ fn post_payload(payload: &str, upload_key: Option<&str>) -> anyhow::Result<Certi
             let detail = resp.text().unwrap_or_default();
             anyhow::bail!(
                 "backend rejected report: HTTP {status}{}",
-                if detail.is_empty() { String::new() } else { format!(" — {detail}") }
+                if detail.is_empty() { String::new() } else { format!(", {detail}") }
             );
         }
         if !status.is_success() {
