@@ -86,20 +86,28 @@ pub fn run(
 
     // A buffer this large needs more workgroups than a single vkCmdDispatch
     // can safely request. Confirmed on real hardware (RX 6600): exceeding
-    // VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0] in one dispatch
-    // call isn't a clean error or an honest clamp — it silently executes
-    // something other than the requested work (the corrupted-looking
-    // results this whole diagnostic detour was chasing turned out to be
-    // this, not a shader logic bug). Chunk every fill/verify dispatch into
-    // calls that each stay within the real limit, using `offset` so each
-    // chunk's shader invocations compute the correct absolute index.
+    // this GPU's *actual* dispatch capacity in one call isn't a clean error
+    // or an honest clamp — it silently executes something other than the
+    // requested work. The driver's own reported
+    // VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0] turned out to be
+    // useless here — it claims 4294967295 (no real limit) and still
+    // corrupts identically at ~7.1M groups, so the query itself can't be
+    // trusted on this hardware/driver combo. Cap against 65535 instead —
+    // the historical D3D10/11-era mandatory minimum, far more conservative
+    // than anything a real GPU should need, and specifically chosen because
+    // it's the value countless existing engines already dispatch within
+    // without hitting driver bugs like this one.
+    const SAFE_MAX_WORKGROUPS: u32 = 65_535;
     if ctx.max_compute_workgroups_x == 0 {
         anyhow::bail!("driver reports maxComputeWorkGroupCount[0] = 0 — can't dispatch anything");
     }
-    let max_elements_per_dispatch = ctx.max_compute_workgroups_x.saturating_mul(WORKGROUP_SIZE);
+    let safe_max_workgroups = ctx.max_compute_workgroups_x.min(SAFE_MAX_WORKGROUPS);
+    let max_elements_per_dispatch = safe_max_workgroups.saturating_mul(WORKGROUP_SIZE);
     println!(
-        "  (VRAM test: {} chunk(s) per pass, driver's max dispatch is {} workgroups)",
+        "  (VRAM test: {} chunk(s) per pass, capped at {} workgroups/dispatch; driver claims {} \
+         but that's not trusted here)",
         element_count.div_ceil(max_elements_per_dispatch.max(1)),
+        safe_max_workgroups,
         ctx.max_compute_workgroups_x
     );
     let dispatch_chunks: Vec<(u32, u32)> = {

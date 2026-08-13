@@ -422,6 +422,26 @@ fn glsl_fract(x: f32) -> f32 {
     x - x.floor()
 }
 
+const TAU: f32 = std::f32::consts::TAU;
+
+/// GLSL's `mod(x, y)` is `x - y * floor(x / y)`, not Rust's `%` (which keeps
+/// the sign of `x`, like Rust's own `f32::fract`) — same family of
+/// cross-language mismatch as `glsl_fract` above, matched exactly for the
+/// same reason: the shader is GLSL, so the CPU reference has to use GLSL's
+/// definition or it isn't actually checking the same computation.
+fn glsl_mod(x: f32, y: f32) -> f32 {
+    x - y * (x / y).floor()
+}
+
+/// See `wrapAngle` in fur.frag: bounds a trig argument to [0, TAU) before
+/// evaluating sin/cos, since GPU-hardware and CPU-libm sin/cos are only
+/// guaranteed to agree closely for well-conditioned (small) arguments — this
+/// shader's raw arguments reach into the tens of thousands of radians with
+/// 4000 iterations, which is real GPU/CPU divergence, not a hardware defect.
+fn wrap_angle(x: f32) -> f32 {
+    glsl_mod(x, TAU)
+}
+
 /// Recomputes `fur.frag`'s output at pixel (px, py) on the CPU — the same
 /// formula, in the same order, given the same push constants. `gl_FragCoord`
 /// is the pixel center (integer + 0.5) per the Vulkan spec.
@@ -431,9 +451,9 @@ fn expected_pixel(px: u32, py: u32, iterations: u32, time: f32) -> [f32; 3] {
     let mut acc = [0f32; 3];
     for i in 0..iterations {
         let f = i as f32 + time;
-        acc[0] += (uv_x * f).sin() * (uv_y * f).cos();
-        acc[1] += (uv_x * f * 1.3).cos() * (uv_y * f * 0.7).sin();
-        acc[2] += ((uv_x + uv_y) * f * 0.5).sin();
+        acc[0] += wrap_angle(uv_x * f).sin() * wrap_angle(uv_y * f).cos();
+        acc[1] += wrap_angle(uv_x * f * 1.3).cos() * wrap_angle(uv_y * f * 0.7).sin();
+        acc[2] += wrap_angle((uv_x + uv_y) * f * 0.5).sin();
     }
     [glsl_fract(acc[0]), glsl_fract(acc[1]), glsl_fract(acc[2])]
 }
