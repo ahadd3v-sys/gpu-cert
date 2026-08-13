@@ -31,7 +31,7 @@
 ///
 /// Revisit when there are enough certificates in circulation that expiring
 /// them is a cost rather than housekeeping.
-export const MIN_CLIENT_VERSION = "0.5.7";
+export const MIN_CLIENT_VERSION = "0.5.8";
 
 export const UPGRADE_MESSAGE =
   "This version of gpu-cert is no longer supported: it has a bug that affects what its results mean. " +

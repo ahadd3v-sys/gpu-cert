@@ -13,7 +13,22 @@ use super::STRESS_COMP_SPV;
 
 const WORKGROUP_SIZE: u32 = 256;
 const ELEMENT_COUNT: u32 = 1 << 20; // 1M floats, large enough to saturate a compute unit, small enough to fit any card's VRAM budget
-const ITERATIONS_PER_DISPATCH: u32 = 20_000;
+/// Halved when the kernel gained instruction-level parallelism.
+///
+/// The work per iteration went from two serial FMAs to sixteen independent
+/// ones, so at the old count a single dispatch does roughly eight times the
+/// arithmetic. Measured against the RTX 3070's old figures (34 ms a dispatch)
+/// that lands near 32 ms, which is fine, but the same arithmetic on a weak
+/// card is not: a GT 710 class GPU would sit close to Windows' two second TDR
+/// timeout, and tripping that kills the run with a device-lost error rather
+/// than a result.
+///
+/// Halving keeps dispatch length in the range that has already been shown to
+/// work on the slowest card tested, and costs nothing: the extra power comes
+/// from the parallelism inside each iteration, not from doing more of them per
+/// dispatch. Telemetry is time-throttled now, so the extra dispatches do not
+/// inflate the report either.
+const ITERATIONS_PER_DISPATCH: u32 = 10_000;
 
 #[repr(C)]
 struct PushConstants {
