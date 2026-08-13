@@ -25,8 +25,15 @@ function formatDate(iso: string): string {
 // signed-out visitors, because the person most likely to need it is a buyer
 // who was handed a certificate link by a stranger — someone with no account
 // and no reason to make one.
+//
+// "Feedback" sits beside it, in the masthead rather than only in the footer,
+// because the tool is new enough that the bugs still outnumber the users. Every
+// hardware fault found so far came from someone running it on a real card and
+// saying what happened, and a report that never gets sent is a bug that stays
+// shipped. Worth demoting to the footer once that stops being true.
 function loggedInNav(): string {
   return `<a href="/verify">Verify</a>
+    <a href="/feedback">Feedback</a>
     <a href="/dashboard">My certificates</a>
     <form method="post" action="/logout"><button type="submit" class="btn btn-quiet">Log out</button></form>`;
 }
@@ -34,6 +41,7 @@ function loggedInNav(): string {
 function loggedOutNav(next?: string): string {
   const q = next ? `?next=${encodeURIComponent(next)}` : "";
   return `<a href="/verify">Verify</a>
+    <a href="/feedback">Feedback</a>
     <a href="/login${q}">Log in</a>
     <a class="btn btn-quiet" href="/signup${q}">Create account</a>`;
 }
