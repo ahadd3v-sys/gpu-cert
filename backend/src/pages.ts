@@ -79,6 +79,14 @@ const HOME_CSS = `
   .step-note { font-size: 12.5px; color: var(--ink-muted); }
   .step-optional .step-title { color: var(--ink-muted); }
 
+  /* Three tests as three columns once there's room, matching the certificate.
+     The render test spanned full width only because two-up orphaned it on a
+     row of its own. */
+  @media (min-width: 1000px) {
+    .protocol-grid { grid-template-columns: repeat(3, 1fr); gap: 30px; }
+    .protocol-block-wide { grid-column: auto; }
+  }
+
   @media (max-width: 560px) {
     .protocol-grid { grid-template-columns: 1fr; gap: 22px; }
   }
@@ -117,7 +125,7 @@ export function renderHome(loggedIn: boolean): string {
         </div>
         <div class="protocol-block-wide">
           <p class="protocol-name">Render integrity test</p>
-          <p class="protocol-method">Renders a deterministic shader and checks a grid of sampled pixels against the CPU-recomputed expected output, every frame.</p>
+          <p class="protocol-method">Renders a deterministic shader and checks every pixel of every frame against the expected output, exactly, with no tolerance.</p>
           <p class="protocol-catch"><b>Catches</b> rasterizer and shader-core defects that produce wrong pixels rather than no pixels, which neither test above reads back far enough to notice.</p>
         </div>
       </div>
@@ -441,7 +449,10 @@ export function renderVerify(opts: {
   return sitePage({
     title: "Verify a certificate",
     nav: opts.loggedIn ? loggedInNav() : loggedOutNav("/verify"),
-    width: 620,
+    // Narrower than the content pages, since this is one short task, but wide
+    // enough that the masthead nav stays on one line and the result labels
+    // ("Certificate No.", "Hardware fingerprint") don't wrap.
+    width: 800,
     css: VERIFY_CSS,
     body: `
     <div class="verify-head">

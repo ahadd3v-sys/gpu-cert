@@ -103,7 +103,7 @@ export function computeVerdict(req: CertifyRequest): VerdictResult {
   if (req.vram_test.total_errors > 0) {
     const errCount = req.vram_test.total_errors;
     reasons.push(
-      `${errCount} VRAM pattern-test error${errCount === 1 ? "" : "s"} detected — indicates damaged or degraded memory cells.`
+      `${errCount.toLocaleString("en-US")} VRAM pattern-test error${errCount === 1 ? "" : "s"} detected — indicates damaged or degraded memory cells.`
     );
   }
 

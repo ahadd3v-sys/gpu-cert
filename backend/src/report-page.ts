@@ -148,6 +148,15 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
     -webkit-font-smoothing: antialiased;
   }
 
+  /* This page carries its own stylesheet rather than the shared site one, so
+     it needs its own link colour: without it the signature-verification link
+     rendered in default browser blue, the one colour nowhere else in the
+     palette, on the document that most needs to look deliberate. */
+  a { color: var(--mark); }
+
+  /* Stays a document. The site pages around it are wider, but a certificate
+     that spans a desktop monitor stops reading as a certificate, and this one
+     is meant to look like paper someone could print. */
   main.page {
     max-width: 760px;
     margin: 0 auto;
@@ -196,9 +205,13 @@ export function renderReportPage(report: ReportRow, viewerLoggedIn: boolean): st
   .hero { position: relative; text-align: center; padding: 8px 0 4px; }
   .eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mark); margin: 0 0 14px; }
   .device-name { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: clamp(28px, 5vw, 38px); line-height: 1.12; margin: 0 0 18px; text-wrap: balance; }
-  .statement { max-width: 46ch; margin: 0 auto; color: var(--ink-muted); font-size: 14.5px; line-height: 1.65; }
+  /* 40ch, not 46: the seal is absolutely positioned into the hero's right
+     side, and at 46ch the centred statement ran under it — the last words of
+     two lines sat beneath the stamp. Narrowing the measure clears it without
+     moving the seal off the corner where it belongs. */
+  .statement { max-width: 40ch; margin: 0 auto; color: var(--ink-muted); font-size: 14.5px; line-height: 1.65; }
 
-  .seal { position: absolute; width: 152px; height: 152px; right: -6px; bottom: -46px; transform: rotate(-8deg); filter: drop-shadow(0 3px 4px rgba(27, 33, 29, 0.18)); }
+  .seal { position: absolute; width: 152px; height: 152px; right: -14px; bottom: -46px; transform: rotate(-8deg); filter: drop-shadow(0 3px 4px rgba(27, 33, 29, 0.18)); }
   .seal-ring-text { font-family: "Space Grotesk", sans-serif; font-size: 8.6px; letter-spacing: 1.6px; }
   .seal-mark { font-size: 11px; }
   .seal-word { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.02em; }

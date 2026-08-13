@@ -200,7 +200,13 @@ interface PageOpts {
   body: string;
 }
 
-export function sitePage({ title, nav = "", css = "", width = 760, body }: PageOpts): string {
+// 1100, not 760. A certificate should read as a document rather than fill the
+// glass, but at 760 on a desktop monitor the sheet floated in more empty
+// background than content, which reads as unfinished rather than as restraint.
+// Prose is kept readable independently by `.statement`'s own max-width in ch,
+// so the extra width goes to the tabular and multi-column sections that can
+// actually use it instead of stretching line lengths.
+export function sitePage({ title, nav = "", css = "", width = 1100, body }: PageOpts): string {
   return `<!doctype html>
 <html lang="en">
 <head>
