@@ -111,6 +111,11 @@ check "verify by certificate number" "$(has "$(curl -s "http://localhost:3111/ve
 check "verify by full report id" "$(has "$(curl -s "http://localhost:3111/verify?reference=$PASS_ID")" "Signature valid")"
 check "unknown certificate reports not found" "$(has "$(curl -s "http://localhost:3111/verify?reference=GPUC-DEADBEEF")" "No certificate found")"
 check "public key is published" "$(has "$(curl -s http://localhost:3111/.well-known/gpu-cert-key.pem)" "BEGIN PUBLIC KEY")"
+# Served as text so a browser shows it, rather than downloading a file the
+# operating system cannot open.
+check "the key displays in a browser rather than downloading"   "$(curl -s -D- -o /dev/null http://localhost:3111/.well-known/gpu-cert-key.pem | grep -qi 'content-type: text/plain' && echo 1 || echo 0)"
+check "the verify page shows the key inline"   "$(has "$(curl -s http://localhost:3111/verify)" 'BEGIN PUBLIC KEY')"
+check "the verify page does not link the key as a file"   "$(curl -s http://localhost:3111/verify | grep -q 'href="/.well-known' && echo 0 || echo 1)"
 
 kit tamper "$PASS_ID" device_name "NVIDIA GeForce RTX 4090" >/dev/null
 check "tampered certificate reports invalid" "$(has "$(curl -s "http://localhost:3111/verify/$NUM")" "Signature does not match")"

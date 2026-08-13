@@ -395,8 +395,9 @@ app.post("/r/:reportId/claim", async (c) => {
 // land here, so a certificate number can be linked directly as well as typed.
 async function handleVerify(c: Context, reference: string | null) {
   const loggedIn = (await getSessionUserId(c)) !== null;
+  const publicKey = (process.env.CERT_SIGNING_PUBLIC_KEY ?? "").replace(/\\n/g, "\n").trim();
   if (!reference) {
-    return c.html(renderVerify({ loggedIn }));
+    return c.html(renderVerify({ loggedIn, publicKey }));
   }
 
   const report = await findReportByReference(reference);
@@ -404,6 +405,7 @@ async function handleVerify(c: Context, reference: string | null) {
     return c.html(
       renderVerify({
         loggedIn,
+        publicKey,
         reference,
         error: "No certificate found with that number. Check it against the certificate itself.",
       }),
@@ -427,6 +429,7 @@ async function handleVerify(c: Context, reference: string | null) {
   return c.html(
     renderVerify({
       loggedIn,
+      publicKey,
       reference,
       result: {
         reference,
@@ -452,8 +455,12 @@ app.get("/verify/:reference", (c) => handleVerify(c, c.req.param("reference")));
 app.get("/.well-known/gpu-cert-key.pem", (c) => {
   const pem = process.env.CERT_SIGNING_PUBLIC_KEY;
   if (!pem) return c.text("signing key not configured", 500);
+  // text/plain, not application/x-pem-file. The correct MIME type made every
+  // browser download a file the operating system then had no idea how to open,
+  // which is a worse answer than showing three lines of text on screen. The
+  // point of publishing this is that a person can look at it.
   return c.text(`${pem.replace(/\\n/g, "\n").trim()}\n`, 200, {
-    "content-type": "application/x-pem-file; charset=utf-8",
+    "content-type": "text/plain; charset=utf-8",
     "cache-control": "public, max-age=3600",
   });
 });

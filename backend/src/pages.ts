@@ -178,7 +178,7 @@ export function renderHome(loggedIn: boolean): string {
         <li><div><div class="step-title">Download and run gpu-cert.exe</div><div class="step-note">A console app. It reads the card's identity, runs the three tests, and submits the result.</div></div></li>
         <li><div><div class="step-title">Your browser opens the finished certificate</div><div class="step-note">Signed server-side and bound to that specific card's fingerprint, at a public URL.</div></div></li>
         <li><div><div class="step-title">Put the link in your listing</div><div class="step-note">Anyone can open it and check the result without installing anything or taking your word for it.</div></div></li>
-        <li class="step-optional"><div><div class="step-title">Optional: keep it in an account</div><div class="step-note">Create an account to collect your certificates in one place, or <a href="/signup">connect the app</a> so future runs file themselves. Certificates you have already made can be added afterwards.</div></div></li>
+        <li class="step-optional"><div><div class="step-title">Optional: put your name on it</div><div class="step-note">The certificate is public and verifiable without an account. To attach one to your name, so it appears in your register and you can build a track record, you need <a href="/signup">an account with a confirmed email</a>. Connect it to the app once and every later run files itself; certificates already made can be attached afterwards.</div></div></li>
       </ol>
     </section>
 
@@ -188,7 +188,7 @@ export function renderHome(loggedIn: boolean): string {
       <p class="section-label">Why a buyer should believe it</p>
       <div class="closing">
         <div>
-          <p class="statement">The certificate is signed with GPU Cert's key when it is issued, not generated in the browser showing it to you. Anyone can re-check that signature against the <a href="/.well-known/gpu-cert-key.pem">published key</a>, or on the <a href="/verify">verification page</a>.</p>
+          <p class="statement">The certificate is signed with GPU Cert's key when it is issued, not generated in the browser showing it to you. Anyone can re-check that signature on the <a href="/verify">verification page</a>, or against GPU Cert's published signing key without trusting this site at all.</p>
           <p class="statement" style="margin-bottom: 0;">There are plenty of good diagnostic tools already. None of them produce something a stranger can check.</p>
         </div>
         <aside class="bound-card">
@@ -562,6 +562,23 @@ const VERIFY_CSS = `
 
   .verify-how { font-size: 12.5px; color: var(--ink-muted); line-height: 1.65; margin: 22px 0 0; padding-top: 16px; border-top: 1px solid var(--paper-deep); }
   .verify-how code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+  /* Shown rather than linked. Serving the key as a file made browsers download
+     something the OS could not open, and the point of publishing it is that a
+     person can read it. */
+  pre.pubkey {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--ink-muted);
+    background: #f6f5f0;
+    border: 1px solid var(--paper-deep);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin: 14px 0 0;
+    overflow-x: auto;
+    white-space: pre;
+    user-select: all;
+  }
 `;
 
 export interface VerifyResult {
@@ -577,6 +594,7 @@ export interface VerifyResult {
 
 export function renderVerify(opts: {
   loggedIn: boolean;
+  publicKey?: string;
   reference?: string;
   error?: string;
   result?: VerifyResult;
@@ -628,8 +646,14 @@ export function renderVerify(opts: {
     <p class="verify-how">
       A valid signature proves the certificate came from GPU Cert and has not been edited. It does not prove the person showing it to you owns that card, so check that the hardware fingerprint matches the card you are actually being sold.
       <br><br>
-      To check it without trusting this page, the public key is published at <code><a href="/.well-known/gpu-cert-key.pem">/.well-known/gpu-cert-key.pem</a></code>.
-    </p>`,
+      To check a signature without trusting this page at all, this is GPU Cert's public key. Verify with any Ed25519 tool.
+    </p>
+    ${
+      opts.publicKey
+        ? `<pre class="pubkey" aria-label="GPU Cert Ed25519 public key">${esc(opts.publicKey)}</pre>
+           <p class="verify-how" style="border: none; padding-top: 0; margin-top: 10px;">Also served as plain text at <code>/.well-known/gpu-cert-key.pem</code>.</p>`
+        : ""
+    }`,
   });
 }
 
