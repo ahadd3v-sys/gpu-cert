@@ -224,6 +224,9 @@ function authPage(opts: {
   error: string | null;
   minLength?: number;
   withUsername?: boolean;
+  /// Login only. The reset flow existed and worked for a while with nothing
+  /// linking to it, which from a user's side is the same as not having one.
+  showForgotLink?: boolean;
   /// Login takes either, so the field cannot be typed as an email.
   identifierLabel?: string;
   altLine: string;
@@ -263,6 +266,7 @@ function authPage(opts: {
       </div>
       <button type="submit" class="btn">${esc(opts.submitLabel)}</button>
     </form>
+    ${opts.showForgotLink ? `<p class="auth-alt"><a href="/forgot-password">Forgot your password?</a></p>` : ""}
     <p class="auth-alt">${opts.altLine}</p>
     <p class="auth-skip">You do not need an account to test a card. <a href="/">Skip this</a> and run the tool.</p>`,
   });
@@ -277,6 +281,7 @@ export function renderLogin(next: string | null, error: string | null): string {
     action: "/login",
     submitLabel: "Log in",
     identifierLabel: "Email or username",
+    showForgotLink: true,
     next,
     error,
     altLine: `No account yet? <a href="/signup${q}">Create one</a>.`,
