@@ -466,9 +466,23 @@ fn expected_pixel(px: u32, py: u32, iterations: u32, seed: u32) -> u32 {
 /// Builds the full expected image for one seed. One pass costs
 /// PIXEL_COUNT * FUR_ITERATIONS iterations, which is why it happens once up
 /// front rather than per frame.
-fn reference_image(seed: u32) -> Vec<u32> {
+/// `on_progress` is called every few thousand pixels, not because the caller
+/// needs the granularity but because this is the one stretch of a run with no
+/// GPU work behind it and, until now, nothing reporting from it.
+///
+/// An RTX 3060 Ti spent thirty four minutes here on work that takes half a
+/// second elsewhere. Whatever caused that, the run was invisible while it
+/// happened: heartbeats only fired from the render loop, so the session sat
+/// silent, no log reached the backend, and a stalled run was indistinguishable
+/// from a dead one. This does not make that machine faster. It makes the next
+/// one explain itself.
+fn reference_image(seed: u32, mut on_progress: impl FnMut()) -> Vec<u32> {
+    const PROGRESS_EVERY: usize = 4096;
     (0..PIXEL_COUNT)
         .map(|i| {
+            if i % PROGRESS_EVERY == 0 {
+                on_progress();
+            }
             let px = (i % COLOR_WIDTH as usize) as u32;
             let py = (i / COLOR_WIDTH as usize) as u32;
             expected_pixel(px, py, FUR_ITERATIONS, seed)
@@ -498,10 +512,16 @@ pub fn run(
     // roughly half a second on a modern laptop, longer on an old desktop,
     // during which nothing else prints and the card sits idle.
     crate::diag::record("computing reference images on the CPU");
-    let references: Vec<(u32, Vec<u32>)> = REFERENCE_SEEDS
-        .iter()
-        .map(|&seed| (seed, reference_image(seed)))
-        .collect();
+    // Zero elapsed, because none of the test has run yet. The callback exists
+    // to keep the session alive and the screen honest, not to report progress
+    // through the test itself.
+    let mut references: Vec<(u32, Vec<u32>)> = Vec::with_capacity(REFERENCE_SEEDS.len());
+    for &seed in REFERENCE_SEEDS.iter() {
+        references.push((seed, reference_image(seed, || {
+            on_tick(Duration::ZERO);
+        })));
+    }
+    crate::diag::record("reference images ready");
 
     let started = Instant::now();
     let mut frames_rendered = 0u32;
