@@ -52,6 +52,8 @@ export const CertifyRequestSchema = z.object({
     aborted_for_safety: z.boolean(),
   }),
   vram_test: z.object({
+    // Optional so a client released before this field existed still validates.
+    diagnostics: z.string().max(600).optional(),
     passes_run: z.number().int().nonnegative(),
     total_errors: z.number().nonnegative(),
     bytes_tested: z.number().nonnegative(),

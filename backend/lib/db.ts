@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS reports (
   vram_bytes_tested INTEGER NOT NULL,
   vram_duration_ms INTEGER NOT NULL,
   vram_aborted_for_safety INTEGER NOT NULL DEFAULT 0,
+  vram_diagnostics TEXT,
   fur_frames_rendered INTEGER NOT NULL DEFAULT 0,
   fur_duration_ms INTEGER NOT NULL DEFAULT 0,
   fur_mismatches INTEGER NOT NULL DEFAULT 0,
@@ -164,6 +165,7 @@ const MIGRATIONS = [
   // signed up.
   `ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1`,
   `ALTER TABLE users ADD COLUMN username TEXT`,
+  `ALTER TABLE reports ADD COLUMN vram_diagnostics TEXT`,
 ];
 
 // Order matters, and getting it wrong takes the whole site down rather than
@@ -229,6 +231,7 @@ export interface ReportRow {
   vram_bytes_tested: number;
   vram_duration_ms: number;
   vram_aborted_for_safety: number;
+  vram_diagnostics: string | null;
   fur_frames_rendered: number;
   fur_duration_ms: number;
   fur_mismatches: number;
@@ -243,7 +246,7 @@ const REPORT_COLUMNS = `id, user_id, client_version, device_name, fingerprint_uu
                  pcie_link_width_current, pcie_link_width_max,
                  verdict, verdict_reasons, stress_dispatch_count, stress_duration_ms,
                  stress_peak_temp_c, stress_thermally_stable, stress_clock_stability_pct, stress_aborted_for_safety,
-                 vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety,
+                 vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety, vram_diagnostics,
                  fur_frames_rendered, fur_duration_ms, fur_mismatches, fur_pixels_checked, fur_aborted_for_safety,
                  signature, created_at`;
 

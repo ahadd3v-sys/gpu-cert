@@ -236,10 +236,10 @@ app.post("/api/certify", async (c) => {
       verdict, verdict_reasons,
       stress_dispatch_count, stress_duration_ms, stress_telemetry_series,
       stress_peak_temp_c, stress_thermally_stable, stress_clock_stability_pct, stress_aborted_for_safety,
-      vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety,
+      vram_passes_run, vram_total_errors, vram_bytes_tested, vram_duration_ms, vram_aborted_for_safety, vram_diagnostics,
       fur_frames_rendered, fur_duration_ms, fur_mismatches, fur_pixels_checked, fur_aborted_for_safety,
       signature, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       keyOwner?.id ?? null,
@@ -266,6 +266,7 @@ app.post("/api/certify", async (c) => {
       req.vram_test.bytes_tested,
       req.vram_test.duration_ms,
       req.vram_test.aborted_for_safety ? 1 : 0,
+      req.vram_test.diagnostics ?? null,
       req.fur_test.frames_rendered,
       req.fur_test.duration_ms,
       req.fur_test.mismatches,

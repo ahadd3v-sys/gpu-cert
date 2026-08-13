@@ -25,9 +25,10 @@ const BYTES_PER_ELEMENT: u64 = 4;
 /// after a failed allocation loses little coverage.
 const SEGMENT_CAP_BYTES: u64 = 1 << 30;
 
-/// Smallest segment worth allocating. Below this the per-dispatch overhead
-/// starts to dominate and the halving retry should give up instead.
-const MIN_SEGMENT_BYTES: u64 = 64 << 20;
+/// Smallest segment worth allocating. Was 64 MiB, which left up to 64 MiB of
+/// reachable VRAM untested at the ceiling; 16 MiB gets closer for the cost of
+/// a few more dispatches.
+const MIN_SEGMENT_BYTES: u64 = 16 << 20;
 
 /// Cap on the workgroups in any single vkCmdDispatch. The spec's required
 /// minimum for maxComputeWorkGroupCount[0] is 65535 and every real driver
@@ -45,6 +46,15 @@ struct PushConstants {
 }
 
 pub struct VramTestResult {
+    /// Everything about how the tested region was chosen and why it stopped
+    /// where it did, in one line, submitted with the report.
+    ///
+    /// This exists because coverage came out at exactly 4032 MB on every card
+    /// it was run against, an 8 GB one and a 16 GB one alike, and the reports
+    /// carried no way to tell whether the limit was the target, the driver's
+    /// budget, or allocations failing. Diagnosing it from the outside meant
+    /// asking someone to copy their console. Now the run says.
+    pub diagnostics: String,
     pub passes_run: u32,
     pub total_errors: u64,
     pub bytes_tested: u64,
@@ -86,7 +96,7 @@ pub fn run(
     min_duration: Duration,
     mut on_pass: impl FnMut(u32, u64, Duration) -> bool,
 ) -> anyhow::Result<VramTestResult> {
-    let segments = allocate_segments(ctx, vram_total_bytes, test_fraction)?;
+    let (segments, diagnostics) = allocate_segments(ctx, vram_total_bytes, test_fraction)?;
     let buffer_size: u64 = segments.iter().map(|s| s.buffer.size).sum();
     let element_count: u64 = segments.iter().map(|s| s.element_count as u64).sum();
 
@@ -243,6 +253,7 @@ pub fn run(
     result?;
 
     Ok(VramTestResult {
+        diagnostics,
         passes_run,
         total_errors,
         bytes_tested: buffer_size,
@@ -279,7 +290,7 @@ fn allocate_segments(
     ctx: &VulkanContext,
     vram_total_bytes: u64,
     test_fraction: f64,
-) -> anyhow::Result<Vec<Segment>> {
+) -> anyhow::Result<(Vec<Segment>, String)> {
     // The heap size is what Vulkan will actually hand out; the vendor
     // telemetry's total counts memory it won't. Trust the smaller.
     let reported_target = (vram_total_bytes as f64 * test_fraction) as u64;
@@ -326,8 +337,12 @@ fn allocate_segments(
         );
     }
 
+    let mb = |n: u64| n / 1_048_576;
     let mut segments: Vec<Segment> = Vec::new();
     let mut allocated = 0u64;
+    let mut stopped_because = "reached the target".to_string();
+    let mut last_error = String::new();
+
     // Shrinks on failure and never grows back. A size that just failed will
     // not fit a moment later either, so retrying it for every remaining
     // segment would only burn time on allocations already known to fail.
@@ -335,13 +350,18 @@ fn allocate_segments(
     while allocated < target {
         let want = align_down((target - allocated).min(cap));
         if want == 0 {
+            stopped_because = "remaining target smaller than one workgroup".to_string();
             break;
         }
-        match GpuBuffer::new(
+        // Every device-local type, not just the preferred one. If one stops
+        // accepting allocations short of the card's capacity, another may
+        // still have room, and the buffer's own memoryTypeBits may rule the
+        // preferred one out entirely.
+        match GpuBuffer::new_in_any_of(
             ctx,
             want,
             vk::BufferUsageFlags::STORAGE_BUFFER,
-            ctx.device_local_memory_type,
+            &ctx.device_local_memory_types,
         ) {
             Ok(buffer) => {
                 allocated += want;
@@ -353,14 +373,37 @@ fn allocate_segments(
             // Halve and keep going rather than stopping at the first refusal.
             // Fragmentation means a 1 GiB request can fail while several
             // 256 MB ones still succeed, and the difference is coverage.
-            Err(_) if cap / 2 >= MIN_SEGMENT_BYTES => {
+            Err(e) if cap / 2 >= MIN_SEGMENT_BYTES => {
+                last_error = e.to_string();
                 cap = align_down(cap / 2);
             }
-            Err(_) => break,
+            Err(e) => {
+                last_error = e.to_string();
+                stopped_because = format!("allocation failed at {} MB", mb(want));
+                break;
+            }
         }
     }
 
-    finish_segments(segments)
+    let diagnostics = format!(
+        "heap {} ({} MB), types {:?}, budget {}, target {} MB, cap {} MB, got {} MB in {} segment(s), stopped: {}{}",
+        ctx.device_local_heap_index,
+        mb(ctx.device_local_heap_size),
+        ctx.device_local_memory_types,
+        match ctx.available_device_local_bytes() {
+            Some(b) => format!("{} MB", mb(b)),
+            None => "unsupported".to_string(),
+        },
+        mb(target),
+        mb(segment_cap),
+        mb(allocated),
+        segments.len(),
+        stopped_because,
+        if last_error.is_empty() { String::new() } else { format!(" ({last_error})") },
+    );
+    println!("  {diagnostics}");
+
+    finish_segments(segments).map(|s| (s, diagnostics))
 }
 
 fn finish_segments(segments: Vec<Segment>) -> anyhow::Result<Vec<Segment>> {

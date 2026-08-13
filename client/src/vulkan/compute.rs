@@ -23,6 +23,32 @@ impl GpuBuffer {
         usage: vk::BufferUsageFlags,
         memory_type: u32,
     ) -> anyhow::Result<Self> {
+        Self::new_in_any_of(ctx, size, usage, &[memory_type])
+    }
+
+    /// Allocates `size` bytes, trying each candidate memory type in order and
+    /// keeping the first that works.
+    ///
+    /// Two things here are load-bearing and were wrong before.
+    ///
+    /// The memory type must appear in this buffer's own
+    /// `memoryTypeBits`. Binding memory of a type the buffer does not accept
+    /// is a spec violation, and picking a type from the device's global list
+    /// without consulting the buffer was doing exactly that.
+    ///
+    /// Every failure path must clean up. Previously a failed
+    /// `vkAllocateMemory` leaked the `VkBuffer`, and a failed
+    /// `vkBindBufferMemory` leaked the buffer *and* the allocation. That
+    /// matters far more than it sounds: the VRAM allocator retries in a
+    /// halving cascade, so a leak on the error path meant every failed attempt
+    /// permanently consumed VRAM, and the retries themselves could be what
+    /// exhausted the card.
+    pub fn new_in_any_of(
+        ctx: &VulkanContext,
+        size: vk::DeviceSize,
+        usage: vk::BufferUsageFlags,
+        candidates: &[u32],
+    ) -> anyhow::Result<Self> {
         unsafe {
             let buffer_info = vk::BufferCreateInfo::default()
                 .size(size)
@@ -34,19 +60,34 @@ impl GpuBuffer {
                 .map_err(|e| anyhow::anyhow!("vkCreateBuffer failed: {e:?}"))?;
 
             let requirements = ctx.device.get_buffer_memory_requirements(buffer);
-            let alloc_info = vk::MemoryAllocateInfo::default()
-                .allocation_size(requirements.size)
-                .memory_type_index(memory_type);
-            let memory = ctx
-                .device
-                .allocate_memory(&alloc_info, None)
-                .map_err(|e| anyhow::anyhow!("vkAllocateMemory failed: {e:?}"))?;
 
-            ctx.device
-                .bind_buffer_memory(buffer, memory, 0)
-                .map_err(|e| anyhow::anyhow!("vkBindBufferMemory failed: {e:?}"))?;
+            let mut last_error = String::from("no compatible memory type");
+            for &memory_type in candidates {
+                if requirements.memory_type_bits & (1 << memory_type) == 0 {
+                    last_error = format!("memory type {memory_type} not accepted by this buffer");
+                    continue;
+                }
+                let alloc_info = vk::MemoryAllocateInfo::default()
+                    .allocation_size(requirements.size)
+                    .memory_type_index(memory_type);
+                let memory = match ctx.device.allocate_memory(&alloc_info, None) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        last_error = format!("vkAllocateMemory({memory_type}) failed: {e:?}");
+                        continue;
+                    }
+                };
+                match ctx.device.bind_buffer_memory(buffer, memory, 0) {
+                    Ok(()) => return Ok(GpuBuffer { buffer, memory, size }),
+                    Err(e) => {
+                        ctx.device.free_memory(memory, None);
+                        last_error = format!("vkBindBufferMemory({memory_type}) failed: {e:?}");
+                    }
+                }
+            }
 
-            Ok(GpuBuffer { buffer, memory, size })
+            ctx.device.destroy_buffer(buffer, None);
+            anyhow::bail!("could not back a {size}-byte buffer: {last_error}")
         }
     }
 

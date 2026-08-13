@@ -12,6 +12,12 @@ pub struct VulkanContext {
     pub queue: vk::Queue,
     pub queue_family_index: u32,
     pub device_local_memory_type: u32,
+    /// Every DEVICE_LOCAL memory type, best first. The VRAM test walks this
+    /// list rather than committing to one: if a type stops accepting
+    /// allocations well short of the card's capacity, the next one may not,
+    /// and a buffer's own `memoryTypeBits` may exclude the preferred type
+    /// anyway.
+    pub device_local_memory_types: Vec<u32>,
     pub host_visible_memory_type: u32,
     pub device_name: String,
     /// VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0], the cap on a
@@ -238,6 +244,24 @@ impl VulkanContext {
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
             )
             .ok_or_else(|| anyhow::anyhow!("no HOST_VISIBLE|HOST_COHERENT memory type found"))?;
+            // Ordered by the same rule that picks the primary: biggest heap
+            // first, then prefer a type without HOST_VISIBLE, since that flag
+            // marks a CPU-accessible window the driver caps far below the heap.
+            let mut device_local_memory_types: Vec<u32> = (0..mem_props.memory_type_count)
+                .filter(|&i| {
+                    mem_props.memory_types[i as usize]
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+                })
+                .collect();
+            device_local_memory_types.sort_by_key(|&i| {
+                let flags = mem_props.memory_types[i as usize].property_flags;
+                std::cmp::Reverse((
+                    heap_size_of(&mem_props, i),
+                    u8::from(!flags.intersects(vk::MemoryPropertyFlags::HOST_VISIBLE)),
+                ))
+            });
+
             let device_local_heap_index =
                 mem_props.memory_types[device_local_memory_type as usize].heap_index;
             let device_local_heap_size = heap_size_of(&mem_props, device_local_memory_type);
@@ -250,6 +274,7 @@ impl VulkanContext {
                 queue,
                 queue_family_index,
                 device_local_memory_type,
+                device_local_memory_types,
                 host_visible_memory_type,
                 physical_device,
                 device_name,

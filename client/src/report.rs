@@ -56,6 +56,10 @@ pub struct StressTestReport {
 
 #[derive(Serialize)]
 pub struct VramTestReport {
+    /// How the tested region was chosen and why it stopped there. Sent with
+    /// the report so a coverage shortfall can be diagnosed from the stored
+    /// data instead of by asking whoever ran it to copy their console.
+    pub diagnostics: String,
     pub passes_run: u32,
     pub total_errors: u64,
     pub bytes_tested: u64,
@@ -66,6 +70,7 @@ pub struct VramTestReport {
 impl VramTestReport {
     pub fn from_result(r: &VramTestResult) -> Self {
         VramTestReport {
+            diagnostics: r.diagnostics.clone(),
             passes_run: r.passes_run,
             total_errors: r.total_errors,
             bytes_tested: r.bytes_tested,
