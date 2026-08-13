@@ -96,15 +96,24 @@ pub fn run(
     min_duration: Duration,
     mut on_pass: impl FnMut(u32, u64, Duration) -> bool,
 ) -> anyhow::Result<VramTestResult> {
-    let (segments, diagnostics) = allocate_segments(ctx, vram_total_bytes, test_fraction)?;
-    let buffer_size: u64 = segments.iter().map(|s| s.buffer.size).sum();
-    let element_count: u64 = segments.iter().map(|s| s.element_count as u64).sum();
-
+    // These two are 4 and 12 bytes and they are allocated *before* the
+    // segments, which deliberately claim as much of the card as they can get.
+    //
+    // They used to come second, and a full-length run on an RX 6600 died at
+    // exactly that point: "could not back a 4-byte buffer". Sixteen bytes of
+    // control state had been left to compete with an allocator that had just
+    // taken 6.8 GB, which is a race the 16 bytes should never have been asked
+    // to run. Taking them first costs nothing measurable and cannot fail for
+    // this reason.
     let error_buffer = GpuBuffer::host_visible(ctx, 4, vk::BufferUsageFlags::STORAGE_BUFFER)?;
     // Diagnostic-only (idx, actual, expected) for the first mismatch a pass
     // finds; see the shader for why this is worth the extra buffer.
     let first_mismatch_buffer =
         GpuBuffer::host_visible(ctx, 12, vk::BufferUsageFlags::STORAGE_BUFFER)?;
+
+    let (segments, diagnostics) = allocate_segments(ctx, vram_total_bytes, test_fraction)?;
+    let buffer_size: u64 = segments.iter().map(|s| s.buffer.size).sum();
+    let element_count: u64 = segments.iter().map(|s| s.element_count as u64).sum();
 
     let kernel = ComputeKernel::new(
         ctx,

@@ -230,10 +230,33 @@ impl VulkanContext {
             // would then cap the VRAM test at the BAR size and silently test a
             // fraction of the card.
 
+            // Memory types this build is not permitted to allocate from.
+            //
+            // VK_AMD_device_coherent_memory is not enabled above, and the spec
+            // is explicit that without the deviceCoherentMemory feature a
+            // memory type carrying DEVICE_COHERENT_BIT_AMD must not be passed
+            // to vkAllocateMemory (VUID-vkAllocateMemory-deviceCoherentMemory-02790).
+            // The driver still enumerates them.
+            //
+            // On an RX 6600 that is eight of the sixteen types, and they are
+            // exactly the ones every allocation failure in this project has
+            // named: type 12 in the v0.4.2 crash, type 14 in the failure of
+            // the first full-length v0.5.1 run. They sorted to the end of both
+            // candidate lists, so they were also the reason the old
+            // last-error-wins message always blamed a type mismatch.
+            let forbidden = vk::MemoryPropertyFlags::DEVICE_COHERENT_AMD
+                | vk::MemoryPropertyFlags::DEVICE_UNCACHED_AMD;
+            let usable = |i: u32| {
+                !mem_props.memory_types[i as usize]
+                    .property_flags
+                    .intersects(forbidden)
+            };
+
             // Ordered by the same rule that picks the primary: biggest heap
             // first, then prefer a type without HOST_VISIBLE, since that flag
             // marks a CPU-accessible window the driver caps far below the heap.
             let mut device_local_memory_types: Vec<u32> = (0..mem_props.memory_type_count)
+                .filter(|&i| usable(i))
                 .filter(|&i| {
                     mem_props.memory_types[i as usize]
                         .property_flags
@@ -249,6 +272,7 @@ impl VulkanContext {
             });
 
             let mut host_visible_memory_types: Vec<u32> = (0..mem_props.memory_type_count)
+                .filter(|&i| usable(i))
                 .filter(|&i| {
                     mem_props.memory_types[i as usize].property_flags.contains(
                         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -481,6 +505,49 @@ mod tests {
             .copied()
             .find(|&t| accepted_by_buffer & (1 << t) != 0);
         assert_eq!(chosen, None);
+    }
+
+    /// The real RX 6600 memory layout, from the environment dump of the run
+    /// that failed. Flags are modelled as bits: 1 DEVICE_LOCAL,
+    /// 2 HOST_VISIBLE, 4 DEVICE_COHERENT_AMD.
+    ///
+    /// Half of this card's types carry the AMD device-coherent flags, and
+    /// allocating from them without enabling VK_AMD_device_coherent_memory is
+    /// forbidden. They must not appear in either candidate list.
+    #[test]
+    fn amd_device_coherent_types_are_never_offered() {
+        const DEVICE_LOCAL: u8 = 1;
+        const HOST_VISIBLE: u8 = 2;
+        const DEVICE_COHERENT_AMD: u8 = 4;
+
+        // index -> flags, exactly as the RX 6600 enumerates them.
+        let types: [u8; 16] = [
+            DEVICE_LOCAL,
+            HOST_VISIBLE,
+            DEVICE_LOCAL | HOST_VISIBLE,
+            HOST_VISIBLE,
+            DEVICE_LOCAL | DEVICE_COHERENT_AMD,
+            HOST_VISIBLE | DEVICE_COHERENT_AMD,
+            DEVICE_LOCAL | HOST_VISIBLE | DEVICE_COHERENT_AMD,
+            HOST_VISIBLE | DEVICE_COHERENT_AMD,
+            DEVICE_LOCAL,
+            HOST_VISIBLE,
+            DEVICE_LOCAL | HOST_VISIBLE,
+            HOST_VISIBLE,
+            DEVICE_LOCAL | DEVICE_COHERENT_AMD,
+            HOST_VISIBLE | DEVICE_COHERENT_AMD,
+            DEVICE_LOCAL | HOST_VISIBLE | DEVICE_COHERENT_AMD,
+            HOST_VISIBLE | DEVICE_COHERENT_AMD,
+        ];
+
+        let usable: Vec<u32> = (0..types.len() as u32)
+            .filter(|&i| types[i as usize] & DEVICE_COHERENT_AMD == 0)
+            .collect();
+
+        assert_eq!(usable, vec![0, 1, 2, 3, 8, 9, 10, 11]);
+        // The two types named in real crash reports must both be gone.
+        assert!(!usable.contains(&12), "type 12 crashed v0.4.2");
+        assert!(!usable.contains(&14), "type 14 failed the first full v0.5.1 run");
     }
 }
 

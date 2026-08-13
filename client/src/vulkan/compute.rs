@@ -71,10 +71,20 @@ impl GpuBuffer {
 
             let requirements = ctx.device.get_buffer_memory_requirements(buffer);
 
-            let mut last_error = String::from("no compatible memory type");
+            // Every candidate's reason is kept, not just the last one.
+            //
+            // Keeping only the last was actively misleading: the candidate
+            // list ends with the AMD device-coherent types, which most buffers
+            // reject outright, so *any* failure anywhere in the list was
+            // reported as "memory type 14 not accepted by this buffer"
+            // regardless of what actually went wrong earlier. A real
+            // out-of-memory on type 0 was being reported as a type mismatch on
+            // type 14, which sent the first diagnosis of this straight into
+            // the wrong half of the problem.
+            let mut failures: Vec<String> = Vec::with_capacity(candidates.len());
             for &memory_type in candidates {
                 if requirements.memory_type_bits & (1 << memory_type) == 0 {
-                    last_error = format!("memory type {memory_type} not accepted by this buffer");
+                    failures.push(format!("{memory_type}: not in memoryTypeBits"));
                     continue;
                 }
                 let alloc_info = vk::MemoryAllocateInfo::default()
@@ -83,7 +93,7 @@ impl GpuBuffer {
                 let memory = match ctx.device.allocate_memory(&alloc_info, None) {
                     Ok(m) => m,
                     Err(e) => {
-                        last_error = format!("vkAllocateMemory({memory_type}) failed: {e:?}");
+                        failures.push(format!("{memory_type}: vkAllocateMemory {e:?}"));
                         continue;
                     }
                 };
@@ -91,13 +101,21 @@ impl GpuBuffer {
                     Ok(()) => return Ok(GpuBuffer { buffer, memory, size }),
                     Err(e) => {
                         ctx.device.free_memory(memory, None);
-                        last_error = format!("vkBindBufferMemory({memory_type}) failed: {e:?}");
+                        failures.push(format!("{memory_type}: vkBindBufferMemory {e:?}"));
                     }
                 }
             }
 
             ctx.device.destroy_buffer(buffer, None);
-            anyhow::bail!("could not back a {size}-byte buffer: {last_error}")
+            let detail = if failures.is_empty() {
+                String::from("no candidate memory types were offered")
+            } else {
+                failures.join(", ")
+            };
+            anyhow::bail!(
+                "could not back a {size}-byte buffer (memoryTypeBits={:#010x}): {detail}",
+                requirements.memory_type_bits
+            )
         }
     }
 
