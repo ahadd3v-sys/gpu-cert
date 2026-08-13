@@ -222,12 +222,20 @@ impl VulkanContext {
             // versions it enumerates first. Taking the first DEVICE_LOCAL type
             // would then cap the VRAM test at the BAR size and silently test a
             // fraction of the card.
-            let device_local_memory_type =
-                find_largest_heap_memory_type(&mem_props, vk::MemoryPropertyFlags::DEVICE_LOCAL)
-                    .ok_or_else(|| anyhow::anyhow!("no DEVICE_LOCAL memory type found"))?;
-            let host_visible_memory_type = find_largest_heap_memory_type(
+            // Real VRAM: avoid HOST_VISIBLE, which marks the CPU-accessible
+            // window rather than the full heap.
+            let device_local_memory_type = find_memory_type(
+                &mem_props,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                vk::MemoryPropertyFlags::HOST_VISIBLE,
+            )
+            .ok_or_else(|| anyhow::anyhow!("no DEVICE_LOCAL memory type found"))?;
+            // Staging and readback: avoid DEVICE_LOCAL, so these small buffers
+            // live in system RAM instead of consuming VRAM the test wants.
+            let host_visible_memory_type = find_memory_type(
                 &mem_props,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
             )
             .ok_or_else(|| anyhow::anyhow!("no HOST_VISIBLE|HOST_COHERENT memory type found"))?;
             let device_local_heap_index =
@@ -283,9 +291,24 @@ impl VulkanContext {
     }
 }
 
-fn find_largest_heap_memory_type(
+/// Picks the memory type with `required` set, preferring the largest heap and
+/// then, among equals, one that does *not* also carry `avoid`.
+///
+/// The tie-break is the whole point and is not cosmetic. This card exposes two
+/// DEVICE_LOCAL types on the same 8 GB heap: type 0 is plain DEVICE_LOCAL
+/// (real VRAM) and type 1 adds HOST_VISIBLE (the CPU-accessible window, which
+/// the driver caps far below the heap size). They tie on heap size, and
+/// `Iterator::max_by_key` returns the *last* maximum, so selecting purely on
+/// heap size quietly chose the host-visible one.
+///
+/// That regressed the VRAM test from allocating 6,787 MB in one go to a hard
+/// ceiling of 4,032 MB, identical on every run and unaffected by closing other
+/// applications, because it was a property of the memory type rather than of
+/// how much VRAM was free.
+fn find_memory_type(
     mem_props: &vk::PhysicalDeviceMemoryProperties,
     required: vk::MemoryPropertyFlags,
+    avoid: vk::MemoryPropertyFlags,
 ) -> Option<u32> {
     (0..mem_props.memory_type_count)
         .filter(|&i| {
@@ -293,7 +316,10 @@ fn find_largest_heap_memory_type(
                 .property_flags
                 .contains(required)
         })
-        .max_by_key(|&i| heap_size_of(mem_props, i))
+        .max_by_key(|&i| {
+            let flags = mem_props.memory_types[i as usize].property_flags;
+            (heap_size_of(mem_props, i), u8::from(!flags.intersects(avoid)))
+        })
 }
 
 fn heap_size_of(mem_props: &vk::PhysicalDeviceMemoryProperties, memory_type: u32) -> u64 {
@@ -307,5 +333,93 @@ impl Drop for VulkanContext {
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Models the RX 6600's actual layout: two DEVICE_LOCAL types sharing the
+    /// same 8 GB heap, one of them also HOST_VISIBLE, plus system memory on a
+    /// larger heap.
+    fn rx6600_like() -> vk::PhysicalDeviceMemoryProperties {
+        let mut p = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 2,
+            memory_type_count: 4,
+            ..Default::default()
+        };
+        p.memory_heaps[0] = vk::MemoryHeap { size: 8_573_157_376, flags: vk::MemoryHeapFlags::DEVICE_LOCAL };
+        p.memory_heaps[1] = vk::MemoryHeap { size: 16_000_000_000, flags: vk::MemoryHeapFlags::empty() };
+
+        p.memory_types[0] = vk::MemoryType { property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL, heap_index: 0 };
+        p.memory_types[1] = vk::MemoryType {
+            property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL
+                | vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_CACHED,
+            heap_index: 0,
+        };
+        p.memory_types[2] = vk::MemoryType {
+            property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            heap_index: 1,
+        };
+        p.memory_types[3] = vk::MemoryType {
+            property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL
+                | vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            heap_index: 0,
+        };
+        p
+    }
+
+    /// The regression this exists for: types 0, 1 and 3 all tie on heap size,
+    /// and `max_by_key` returns the last maximum, so selecting on heap size
+    /// alone picked a HOST_VISIBLE type. That capped the VRAM test at 4032 MB
+    /// on a card that had already allocated 6787 MB from type 0, and it looked
+    /// exactly like a hardware limit rather than a selection bug.
+    #[test]
+    fn device_local_selection_avoids_the_host_visible_window() {
+        let p = rx6600_like();
+        let chosen = find_memory_type(
+            &p,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            vk::MemoryPropertyFlags::HOST_VISIBLE,
+        );
+        assert_eq!(chosen, Some(0), "must pick plain DEVICE_LOCAL, not a host-visible window");
+    }
+
+    /// Staging buffers belong in system RAM; putting them in device-local
+    /// memory spends VRAM the test is trying to cover.
+    #[test]
+    fn host_visible_selection_avoids_device_local() {
+        let p = rx6600_like();
+        let chosen = find_memory_type(
+            &p,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        );
+        assert_eq!(chosen, Some(2));
+    }
+
+    /// The largest heap still wins over the flag preference, so a small
+    /// dedicated BAR heap can't be mistaken for the card's real VRAM.
+    #[test]
+    fn largest_heap_still_wins() {
+        let mut p = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 2,
+            memory_type_count: 2,
+            ..Default::default()
+        };
+        p.memory_heaps[0] = vk::MemoryHeap { size: 268_435_456, flags: vk::MemoryHeapFlags::DEVICE_LOCAL };
+        p.memory_heaps[1] = vk::MemoryHeap { size: 8_573_157_376, flags: vk::MemoryHeapFlags::DEVICE_LOCAL };
+        // The small BAR heap enumerates first, as it does on some drivers.
+        p.memory_types[0] = vk::MemoryType { property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL, heap_index: 0 };
+        p.memory_types[1] = vk::MemoryType { property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL, heap_index: 1 };
+        let chosen = find_memory_type(
+            &p,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            vk::MemoryPropertyFlags::HOST_VISIBLE,
+        );
+        assert_eq!(chosen, Some(1));
     }
 }

@@ -6,6 +6,38 @@ broken, what was tried, and why.
 
 ---
 
+## 2026-08-13 — v0.3.1: the 49% VRAM coverage was my regression, not the hardware.
+
+Full 10-minute run on the RX 6600 passed clean (v0.3.0, report `ba8f8896`,
+12,563 passes, 941M pixels, 0 errors). That also closes the "never run at
+full length" gap. But coverage was 4,227,858,432 bytes again, **byte-identical
+to the previous run**, which is the tell: free VRAM varies between sessions,
+so an exact repeat is a deterministic cap rather than memory pressure.
+
+**Root cause: `find_largest_heap_memory_type` picked the wrong memory type.**
+This card exposes two DEVICE_LOCAL types on the same 8 GB heap — type 0 plain
+DEVICE_LOCAL, type 1 also HOST_VISIBLE (the CPU-accessible window, capped far
+below the heap). They tie on heap size, and `Iterator::max_by_key` returns the
+**last** maximum, so v0.2.0 silently started allocating from the host-visible
+one. The `.find()` it replaced returned type 0.
+
+Proof it was not a hardware limit: v0.1.7 allocated **6,787 MB in a single
+allocation** on this same card. Selection is now `find_memory_type(required,
+avoid)`, preferring the largest heap and then a type without the avoided flag,
+pinned by three unit tests using this card's real layout.
+
+The allocation arithmetic is worth keeping as a diagnostic technique. The
+halving cascade lands on exactly 3×1024 + 512 + 256 + 128 + 64 = 4032 MB,
+which pins the ceiling to (4032, 4096) MB — just under 2^32. Reading that
+pattern backwards is what identified it without another hardware run.
+
+Staging and readback buffers now also prefer system RAM over device-local,
+so they stop spending VRAM the test wants to cover. And the run prints the
+chosen memory type, heap, and live allocatable budget, so a future shortfall
+can be attributed from the output instead of reconstructed from arithmetic.
+
+---
+
 ## 2026-08-13 — v0.3.0: audited the NVML path before its first run. It had a silent fingerprint bug.
 
 An NVIDIA run is coming, and that path had never executed. Rather than spend

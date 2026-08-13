@@ -129,6 +129,20 @@ pub fn run(
         coverage_pct,
         segments.len(),
     );
+    // Enough to tell, from the output alone, *why* coverage came out where it
+    // did. A shortfall caused by picking the wrong memory type looks identical
+    // on the certificate to one caused by a busy card, and telling them apart
+    // previously meant reasoning backwards from allocation arithmetic.
+    println!(
+        "  (device-local memory type {} on heap {} of {} MB; driver reports {} MB allocatable now)",
+        ctx.device_local_memory_type,
+        ctx.device_local_heap_index,
+        ctx.device_local_heap_size / 1_048_576,
+        match ctx.available_device_local_bytes() {
+            Some(available) => (available / 1_048_576).to_string(),
+            None => "unknown".to_string(),
+        },
+    );
     // Coverage is on the certificate, so a low number needs explaining to the
     // person running it while they can still do something about it. Anything
     // already resident (browser, compositor, another game) is memory this
