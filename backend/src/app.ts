@@ -47,7 +47,7 @@ import { renderReportPage } from "./report-page.js";
 import { renderBadge } from "./badge.js";
 import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback, renderNotice, renderForgotPassword, renderResetPassword } from "./pages.js";
 
-const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpu-cert.vercel.app";
+const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpucert.com";
 const SESSION_COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
@@ -76,7 +76,7 @@ function isoMinutesAgo(minutes: number): string {
 // `next` comes straight off the query string and is fed to a redirect after
 // login, so it has to be constrained to this site. Left open, a link like
 // /login?next=https://evil.example would send someone who just typed their
-// password into gpu-cert.vercel.app onward to an attacker's page, which is a
+// password into gpucert.com onward to an attacker's page, which is a
 // credible phishing setup precisely because the login itself was genuine.
 //
 // A single leading slash is required and a second one rejected: "//evil.example"

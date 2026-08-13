@@ -6,7 +6,9 @@
 
 ## Preview
 
-The site's live now: **https://gpu-cert.vercel.app**.
+The site's live now: **https://gpucert.com**. The original
+`gpu-cert.vercel.app` alias stays active, so certificates issued before the
+move and exes already downloaded both keep working.
 
 The report page (`backend/src/report-page.ts`) is styled as an actual
 certificate rather than a plain results screen: masthead, GPU spec table,
@@ -306,7 +308,7 @@ actually be verified here vs. what's still gated on real hardware:
   product's own trust story, not just a distribution fix). Ships unsigned
   still (no code-signing budget yet), so Windows SmartScreen will likely
   flag it on first run.
-- **Resolved:** the backend is live at `https://gpu-cert.vercel.app`: real
+- **Resolved:** the backend is live at `https://gpucert.com`: real
   Turso DB (`gpu-cert` in a new `gpu-cert-us` group, `aws-us-east-1`, paired
   with the Vercel function's `iad1` region for a short DB hop), a real
   Ed25519 signing key, and all other production secrets are provisioned and

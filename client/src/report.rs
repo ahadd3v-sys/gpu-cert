@@ -112,7 +112,11 @@ pub struct CertifyResponse {
 /// Backend base URL, hardcoded to production for now since there's no
 /// staging environment yet. Revisit if/when the backend gets a staging
 /// deploy worth pointing the client at during development.
-const BACKEND_BASE_URL: &str = "https://gpu-cert.vercel.app";
+///
+/// Releases before v0.4.1 point at gpu-cert.vercel.app instead. That alias
+/// stays live and keeps working, so an exe already sitting on someone's
+/// desktop is not broken by the move.
+const BACKEND_BASE_URL: &str = "https://gpucert.com";
 
 /// `upload_key` is the "connect the app to your account" credential the user
 /// copies off their dashboard. It's optional on purpose: the tool is fully
