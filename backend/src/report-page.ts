@@ -72,10 +72,10 @@ function renderSeal(verdict: "Pass" | "Fail"): string {
         <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="noise"/>
         <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.6"/>
       </filter>
-      <path id="sealRingPath" d="M 62.5,164.95 A 75,75 0 1,1 137.5,164.95" fill="none"/>
+      <path id="sealRingPath" d="M 58,172.75 A 84,84 0 1,1 142,172.75" fill="none"/>
     </defs>
-    <circle cx="100" cy="100" r="90" fill="none" stroke="${color}" stroke-width="1.5" opacity="0.9" filter="url(#sealInk)"/>
-    <circle cx="100" cy="100" r="80" fill="none" stroke="${color}" stroke-width="1" opacity="0.75" filter="url(#sealInk)"/>
+    <circle cx="100" cy="100" r="92" fill="none" stroke="${color}" stroke-width="3" opacity="0.9" filter="url(#sealInk)"/>
+    <circle cx="100" cy="100" r="78" fill="none" stroke="${color}" stroke-width="2.5" opacity="0.8" filter="url(#sealInk)"/>
     <text class="seal-ring-text" fill="${color}">
       <textPath href="#sealRingPath" startOffset="1%">${esc(ringText)}</textPath>
     </text>
@@ -224,10 +224,10 @@ ${FAVICON_LINK}
   .statement { max-width: 40ch; margin: 0 auto; color: var(--ink-muted); font-size: 14.5px; line-height: 1.65; }
 
   .seal { position: absolute; width: 152px; height: 152px; right: -14px; bottom: -46px; transform: rotate(-8deg); filter: drop-shadow(0 3px 4px rgba(27, 33, 29, 0.18)); }
-  .seal-ring-text { font-family: "Space Grotesk", sans-serif; font-size: 8.6px; letter-spacing: 1.6px; }
-  .seal-mark { font-size: 11px; }
-  .seal-word { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.02em; }
-  .seal-subword { font-size: 9px; letter-spacing: 0.14em; }
+  .seal-ring-text { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 8px; letter-spacing: 1.3px; }
+  .seal-mark { font-size: 13px; }
+  .seal-word { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 32px; letter-spacing: 0.02em; }
+  .seal-subword { font-weight: 600; font-size: 9px; letter-spacing: 0.14em; }
 
   .section-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mark); margin: 0 0 14px; }
 
