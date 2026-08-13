@@ -17,13 +17,23 @@ pub struct GpuBuffer {
 }
 
 impl GpuBuffer {
-    pub fn new(
+    /// VRAM. Tries every device-local type rather than one chosen device-wide,
+    /// because only the buffer itself can say which types it accepts.
+    pub fn device_local(
         ctx: &VulkanContext,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
-        memory_type: u32,
     ) -> anyhow::Result<Self> {
-        Self::new_in_any_of(ctx, size, usage, &[memory_type])
+        Self::new_in_any_of(ctx, size, usage, &ctx.device_local_memory_types)
+    }
+
+    /// Staging and readback, mapped by the host.
+    pub fn host_visible(
+        ctx: &VulkanContext,
+        size: vk::DeviceSize,
+        usage: vk::BufferUsageFlags,
+    ) -> anyhow::Result<Self> {
+        Self::new_in_any_of(ctx, size, usage, &ctx.host_visible_memory_types)
     }
 
     /// Allocates `size` bytes, trying each candidate memory type in order and

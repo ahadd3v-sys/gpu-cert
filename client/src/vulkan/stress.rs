@@ -40,12 +40,8 @@ pub fn run(
     mut on_tick: impl FnMut(Duration) -> bool,
 ) -> anyhow::Result<StressRunResult> {
     let buffer_size = (ELEMENT_COUNT as u64) * 4;
-    let data_buffer = GpuBuffer::new(
-        ctx,
-        buffer_size,
-        vk::BufferUsageFlags::STORAGE_BUFFER,
-        ctx.device_local_memory_type,
-    )?;
+    let data_buffer =
+        GpuBuffer::device_local(ctx, buffer_size, vk::BufferUsageFlags::STORAGE_BUFFER)?;
 
     let kernel = ComputeKernel::new(
         ctx,

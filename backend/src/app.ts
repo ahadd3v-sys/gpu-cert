@@ -64,6 +64,41 @@ const SESSION_COOKIE_OPTS = {
 
 export const app = new Hono();
 
+// One canonical host, everything else redirected to it.
+//
+// A certificate reachable at gpucert.com, www.gpucert.com and
+// gpu-cert.vercel.app is the same document living at three addresses, which is
+// exactly the wrong property for something whose job is to be checkable. It
+// also splits view counts three ways.
+//
+// Only GET and HEAD are redirected, and never /api. A 301 or 308 on a POST is
+// handled inconsistently by HTTP clients (many downgrade it to GET), so
+// redirecting the ingest endpoint would break clients released before the
+// domain move rather than forwarding them. Those keep working on the old host
+// exactly as they did.
+const CANONICAL_HOST = (() => {
+  try {
+    return new URL(BASE_URL).host;
+  } catch {
+    return "gpucert.com";
+  }
+})();
+
+app.use("*", async (c, next) => {
+  const method = c.req.method;
+  const url = new URL(c.req.url);
+  const isBrowserRead = method === "GET" || method === "HEAD";
+  const isApi = url.pathname.startsWith("/api/");
+
+  if (isBrowserRead && !isApi && url.host !== CANONICAL_HOST) {
+    url.host = CANONICAL_HOST;
+    url.protocol = "https:";
+    url.port = "";
+    return c.redirect(url.toString(), 308);
+  }
+  await next();
+});
+
 // Client IPs are only ever needed to spot one source hammering an endpoint,
 // never to identify anyone, so they are salted and hashed on the way in and
 // the raw address is never stored. AUTH_SECRET doubles as the salt: it already

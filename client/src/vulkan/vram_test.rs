@@ -100,20 +100,11 @@ pub fn run(
     let buffer_size: u64 = segments.iter().map(|s| s.buffer.size).sum();
     let element_count: u64 = segments.iter().map(|s| s.element_count as u64).sum();
 
-    let error_buffer = GpuBuffer::new(
-        ctx,
-        4,
-        vk::BufferUsageFlags::STORAGE_BUFFER,
-        ctx.host_visible_memory_type,
-    )?;
+    let error_buffer = GpuBuffer::host_visible(ctx, 4, vk::BufferUsageFlags::STORAGE_BUFFER)?;
     // Diagnostic-only (idx, actual, expected) for the first mismatch a pass
     // finds; see the shader for why this is worth the extra buffer.
-    let first_mismatch_buffer = GpuBuffer::new(
-        ctx,
-        12,
-        vk::BufferUsageFlags::STORAGE_BUFFER,
-        ctx.host_visible_memory_type,
-    )?;
+    let first_mismatch_buffer =
+        GpuBuffer::host_visible(ctx, 12, vk::BufferUsageFlags::STORAGE_BUFFER)?;
 
     let kernel = ComputeKernel::new(
         ctx,
@@ -144,8 +135,8 @@ pub fn run(
     // on the certificate to one caused by a busy card, and telling them apart
     // previously meant reasoning backwards from allocation arithmetic.
     println!(
-        "  (device-local memory type {} on heap {} of {} MB; driver reports {} MB allocatable now)",
-        ctx.device_local_memory_type,
+        "  (device-local memory types {:?} on heap {} of {} MB; driver reports {} MB allocatable now)",
+        ctx.device_local_memory_types,
         ctx.device_local_heap_index,
         ctx.device_local_heap_size / 1_048_576,
         match ctx.available_device_local_bytes() {

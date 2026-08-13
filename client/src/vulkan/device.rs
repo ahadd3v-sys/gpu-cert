@@ -11,14 +11,15 @@ pub struct VulkanContext {
     pub device: ash::Device,
     pub queue: vk::Queue,
     pub queue_family_index: u32,
-    pub device_local_memory_type: u32,
     /// Every DEVICE_LOCAL memory type, best first. The VRAM test walks this
     /// list rather than committing to one: if a type stops accepting
     /// allocations well short of the card's capacity, the next one may not,
     /// and a buffer's own `memoryTypeBits` may exclude the preferred type
     /// anyway.
     pub device_local_memory_types: Vec<u32>,
-    pub host_visible_memory_type: u32,
+    /// Every HOST_VISIBLE|HOST_COHERENT type, best first, for the same reason
+    /// as the device-local list above.
+    pub host_visible_memory_types: Vec<u32>,
     pub device_name: String,
     /// VkPhysicalDeviceLimits::maxComputeWorkGroupCount[0], the cap on a
     /// single vkCmdDispatch's X-dimension group count. The spec's required
@@ -43,7 +44,7 @@ pub struct VulkanContext {
     /// smaller than the heap (3.5 GiB on the RX 6600 against 8 GiB of VRAM),
     /// so covering a card's whole VRAM always means several allocations.
     pub max_memory_allocation_size: u64,
-    /// Size of the heap backing `device_local_memory_type`. The upper bound
+    /// Size of the heap backing the preferred device-local type. The upper bound
     /// on what the VRAM test could ever allocate, and typically a better
     /// number than the vendor telemetry's VRAM total, which counts memory
     /// Vulkan can't hand out.
@@ -228,22 +229,7 @@ impl VulkanContext {
             // versions it enumerates first. Taking the first DEVICE_LOCAL type
             // would then cap the VRAM test at the BAR size and silently test a
             // fraction of the card.
-            // Real VRAM: avoid HOST_VISIBLE, which marks the CPU-accessible
-            // window rather than the full heap.
-            let device_local_memory_type = find_memory_type(
-                &mem_props,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                vk::MemoryPropertyFlags::HOST_VISIBLE,
-            )
-            .ok_or_else(|| anyhow::anyhow!("no DEVICE_LOCAL memory type found"))?;
-            // Staging and readback: avoid DEVICE_LOCAL, so these small buffers
-            // live in system RAM instead of consuming VRAM the test wants.
-            let host_visible_memory_type = find_memory_type(
-                &mem_props,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            )
-            .ok_or_else(|| anyhow::anyhow!("no HOST_VISIBLE|HOST_COHERENT memory type found"))?;
+
             // Ordered by the same rule that picks the primary: biggest heap
             // first, then prefer a type without HOST_VISIBLE, since that flag
             // marks a CPU-accessible window the driver caps far below the heap.
@@ -262,9 +248,30 @@ impl VulkanContext {
                 ))
             });
 
+            let mut host_visible_memory_types: Vec<u32> = (0..mem_props.memory_type_count)
+                .filter(|&i| {
+                    mem_props.memory_types[i as usize].property_flags.contains(
+                        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                    )
+                })
+                .collect();
+            host_visible_memory_types.sort_by_key(|&i| {
+                let flags = mem_props.memory_types[i as usize].property_flags;
+                std::cmp::Reverse((
+                    heap_size_of(&mem_props, i),
+                    u8::from(!flags.intersects(vk::MemoryPropertyFlags::DEVICE_LOCAL)),
+                ))
+            });
+
+            let &preferred_device_local = device_local_memory_types
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("no DEVICE_LOCAL memory type found"))?;
+            if host_visible_memory_types.is_empty() {
+                anyhow::bail!("no HOST_VISIBLE|HOST_COHERENT memory type found");
+            }
             let device_local_heap_index =
-                mem_props.memory_types[device_local_memory_type as usize].heap_index;
-            let device_local_heap_size = heap_size_of(&mem_props, device_local_memory_type);
+                mem_props.memory_types[preferred_device_local as usize].heap_index;
+            let device_local_heap_size = heap_size_of(&mem_props, preferred_device_local);
 
             Ok(VulkanContext {
                 _entry: entry,
@@ -273,9 +280,8 @@ impl VulkanContext {
                 device,
                 queue,
                 queue_family_index,
-                device_local_memory_type,
                 device_local_memory_types,
-                host_visible_memory_type,
+                host_visible_memory_types,
                 physical_device,
                 device_name,
                 max_compute_workgroups_x,
@@ -286,6 +292,25 @@ impl VulkanContext {
                 memory_budget_supported,
             })
         }
+    }
+
+    /// Picks the first candidate this specific allocation will actually
+    /// accept.
+    ///
+    /// Vulkan's memory type index is only meaningful against a particular
+    /// resource: `vkGetBufferMemoryRequirements` returns a `memoryTypeBits`
+    /// mask, and binding a type outside it is invalid. Choosing one "best"
+    /// type device-wide and using it for everything ignores that, and did so
+    /// here on every allocation the client made. On an RX 6600 the chosen type
+    /// (12) was rejected by an ordinary storage buffer, so every run had been
+    /// binding memory the buffer did not accept, which is undefined behaviour
+    /// and the most likely explanation for VRAM allocation capping out well
+    /// short of the card.
+    pub fn compatible_memory_type(&self, type_bits: u32, candidates: &[u32]) -> Option<u32> {
+        candidates
+            .iter()
+            .copied()
+            .find(|&t| type_bits & (1 << t) != 0)
     }
 
     /// How much device-local memory this process can still allocate, as the
@@ -316,36 +341,6 @@ impl VulkanContext {
     }
 }
 
-/// Picks the memory type with `required` set, preferring the largest heap and
-/// then, among equals, one that does *not* also carry `avoid`.
-///
-/// The tie-break is the whole point and is not cosmetic. This card exposes two
-/// DEVICE_LOCAL types on the same 8 GB heap: type 0 is plain DEVICE_LOCAL
-/// (real VRAM) and type 1 adds HOST_VISIBLE (the CPU-accessible window, which
-/// the driver caps far below the heap size). They tie on heap size, and
-/// `Iterator::max_by_key` returns the *last* maximum, so selecting purely on
-/// heap size quietly chose the host-visible one.
-///
-/// That regressed the VRAM test from allocating 6,787 MB in one go to a hard
-/// ceiling of 4,032 MB, identical on every run and unaffected by closing other
-/// applications, because it was a property of the memory type rather than of
-/// how much VRAM was free.
-fn find_memory_type(
-    mem_props: &vk::PhysicalDeviceMemoryProperties,
-    required: vk::MemoryPropertyFlags,
-    avoid: vk::MemoryPropertyFlags,
-) -> Option<u32> {
-    (0..mem_props.memory_type_count)
-        .filter(|&i| {
-            mem_props.memory_types[i as usize]
-                .property_flags
-                .contains(required)
-        })
-        .max_by_key(|&i| {
-            let flags = mem_props.memory_types[i as usize].property_flags;
-            (heap_size_of(mem_props, i), u8::from(!flags.intersects(avoid)))
-        })
-}
 
 fn heap_size_of(mem_props: &vk::PhysicalDeviceMemoryProperties, memory_type: u32) -> u64 {
     let heap_index = mem_props.memory_types[memory_type as usize].heap_index;
@@ -458,89 +453,34 @@ pub fn describe_devices() -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
-    /// Models the RX 6600's actual layout: two DEVICE_LOCAL types sharing the
-    /// same 8 GB heap, one of them also HOST_VISIBLE, plus system memory on a
-    /// larger heap.
-    fn rx6600_like() -> vk::PhysicalDeviceMemoryProperties {
-        let mut p = vk::PhysicalDeviceMemoryProperties {
-            memory_heap_count: 2,
-            memory_type_count: 4,
-            ..Default::default()
-        };
-        p.memory_heaps[0] = vk::MemoryHeap { size: 8_573_157_376, flags: vk::MemoryHeapFlags::DEVICE_LOCAL };
-        p.memory_heaps[1] = vk::MemoryHeap { size: 16_000_000_000, flags: vk::MemoryHeapFlags::empty() };
 
-        p.memory_types[0] = vk::MemoryType { property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL, heap_index: 0 };
-        p.memory_types[1] = vk::MemoryType {
-            property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL
-                | vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_CACHED,
-            heap_index: 0,
-        };
-        p.memory_types[2] = vk::MemoryType {
-            property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            heap_index: 1,
-        };
-        p.memory_types[3] = vk::MemoryType {
-            property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL
-                | vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
-            heap_index: 0,
-        };
-        p
+    /// A type index is only meaningful against a specific resource. Choosing
+    /// one device-wide and binding it to everything is what produced
+    /// "memory type 12 not accepted by this buffer" on a real RX 6600, after
+    /// every previous release had been binding it anyway.
+    #[test]
+    fn only_types_the_resource_accepts_are_offered() {
+        let ctx_types = [12u32, 0, 1];
+        let accepted_by_buffer = 0b0000_0011u32; // types 0 and 1 only
+        let chosen = ctx_types
+            .iter()
+            .copied()
+            .find(|&t| accepted_by_buffer & (1 << t) != 0);
+        assert_eq!(chosen, Some(0), "must skip type 12 and fall through to one that fits");
     }
 
-    /// The regression this exists for: types 0, 1 and 3 all tie on heap size,
-    /// and `max_by_key` returns the last maximum, so selecting on heap size
-    /// alone picked a HOST_VISIBLE type. That capped the VRAM test at 4032 MB
-    /// on a card that had already allocated 6787 MB from type 0, and it looked
-    /// exactly like a hardware limit rather than a selection bug.
+    /// And if none of them fit, that has to be an error rather than a bind of
+    /// whatever was first.
     #[test]
-    fn device_local_selection_avoids_the_host_visible_window() {
-        let p = rx6600_like();
-        let chosen = find_memory_type(
-            &p,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            vk::MemoryPropertyFlags::HOST_VISIBLE,
-        );
-        assert_eq!(chosen, Some(0), "must pick plain DEVICE_LOCAL, not a host-visible window");
-    }
-
-    /// Staging buffers belong in system RAM; putting them in device-local
-    /// memory spends VRAM the test is trying to cover.
-    #[test]
-    fn host_visible_selection_avoids_device_local() {
-        let p = rx6600_like();
-        let chosen = find_memory_type(
-            &p,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        );
-        assert_eq!(chosen, Some(2));
-    }
-
-    /// The largest heap still wins over the flag preference, so a small
-    /// dedicated BAR heap can't be mistaken for the card's real VRAM.
-    #[test]
-    fn largest_heap_still_wins() {
-        let mut p = vk::PhysicalDeviceMemoryProperties {
-            memory_heap_count: 2,
-            memory_type_count: 2,
-            ..Default::default()
-        };
-        p.memory_heaps[0] = vk::MemoryHeap { size: 268_435_456, flags: vk::MemoryHeapFlags::DEVICE_LOCAL };
-        p.memory_heaps[1] = vk::MemoryHeap { size: 8_573_157_376, flags: vk::MemoryHeapFlags::DEVICE_LOCAL };
-        // The small BAR heap enumerates first, as it does on some drivers.
-        p.memory_types[0] = vk::MemoryType { property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL, heap_index: 0 };
-        p.memory_types[1] = vk::MemoryType { property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL, heap_index: 1 };
-        let chosen = find_memory_type(
-            &p,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            vk::MemoryPropertyFlags::HOST_VISIBLE,
-        );
-        assert_eq!(chosen, Some(1));
+    fn no_compatible_type_is_an_error() {
+        let ctx_types = [12u32];
+        let accepted_by_buffer = 0b0000_0011u32;
+        let chosen = ctx_types
+            .iter()
+            .copied()
+            .find(|&t| accepted_by_buffer & (1 << t) != 0);
+        assert_eq!(chosen, None);
     }
 }
 

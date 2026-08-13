@@ -143,6 +143,12 @@ check "login renders" "$(has "$(curl -s http://localhost:3111/login)" "Log in")"
 check "login links to password reset" "$(has "$(curl -s http://localhost:3111/login)" 'href="/forgot-password"')"
 check "badge renders as png" "$(curl -s -o /dev/null -w '%{content_type}' "http://localhost:3111/r/$FAIL_ID/badge" | grep -q image && echo 1 || echo 0)"
 check "open redirect is blocked" "$(curl -s "http://localhost:3111/login?next=https://evil.example" | grep -q 'value="https://evil.example"' && echo 0 || echo 1)"
+# One canonical host: the same certificate must not live at several addresses.
+check "a non-canonical host is redirected" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: www.example.test' http://localhost:3111/verify | grep -q 308 && echo 1 || echo 0)"
+check "the API is never redirected, so older clients keep working" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Host: www.example.test' -H 'content-type: application/json' -d '{}' http://localhost:3111/api/certify | grep -q 400 && echo 1 || echo 0)"
+
 check "unknown report 404s" "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3111/r/00000000-0000-0000-0000-000000000000 | grep -q 404 && echo 1 || echo 0)"
 
 echo ""

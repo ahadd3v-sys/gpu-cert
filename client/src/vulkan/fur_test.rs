@@ -219,10 +219,18 @@ impl FurPipeline {
                 .device
                 .create_image(&image_info, None)
                 .map_err(|e| anyhow::anyhow!("vkCreateImage failed: {e:?}"))?;
+            // Same rule as buffers: the image decides which memory types it
+            // accepts, and a device-wide "best" index is not necessarily one
+            // of them. Binding one that isn't is undefined behaviour.
             let image_requirements = ctx.device.get_image_memory_requirements(color_image);
+            let image_memory_type = ctx
+                .compatible_memory_type(image_requirements.memory_type_bits, &ctx.device_local_memory_types)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no device-local memory type accepted by the render target")
+                })?;
             let image_alloc_info = vk::MemoryAllocateInfo::default()
                 .allocation_size(image_requirements.size)
-                .memory_type_index(ctx.device_local_memory_type);
+                .memory_type_index(image_memory_type);
             let color_memory = ctx
                 .device
                 .allocate_memory(&image_alloc_info, None)
@@ -269,9 +277,14 @@ impl FurPipeline {
                 .create_buffer(&buffer_info, None)
                 .map_err(|e| anyhow::anyhow!("vkCreateBuffer (readback) failed: {e:?}"))?;
             let buffer_requirements = ctx.device.get_buffer_memory_requirements(readback_buffer);
+            let readback_memory_type = ctx
+                .compatible_memory_type(buffer_requirements.memory_type_bits, &ctx.host_visible_memory_types)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no host-visible memory type accepted by the readback buffer")
+                })?;
             let buffer_alloc_info = vk::MemoryAllocateInfo::default()
                 .allocation_size(buffer_requirements.size)
-                .memory_type_index(ctx.host_visible_memory_type);
+                .memory_type_index(readback_memory_type);
             let readback_memory = ctx
                 .device
                 .allocate_memory(&buffer_alloc_info, None)
