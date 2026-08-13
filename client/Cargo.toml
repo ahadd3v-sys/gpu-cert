@@ -1,6 +1,6 @@
 [package]
 name = "gpu-cert"
-version = "0.5.4"
+version = "0.5.5"
 edition = "2024"
 description = "GPU hardware verification client, telemetry, stress test, VRAM pattern test, fingerprint"
 
@@ -42,6 +42,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_ProcessStatus",
     # Enabling ANSI handling so the console UI can redraw in place. See ui.rs.
     "Win32_System_Console",
+    # SetConsoleOutputCP, so UTF-8 box drawing is not mojibake. See ui.rs.
+    "Win32_Globalization",
 ] }
 
 [build-dependencies]

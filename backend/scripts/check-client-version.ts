@@ -23,7 +23,7 @@ check("garbage sorts low", compareVersions("nonsense", "0.5.1") < 0, true);
 // every superseded release. Each entry here was current once.
 for (const old of [
   "0.1.0", "0.1.7", "0.1.8", "0.2.0", "0.3.0", "0.3.1",
-  "0.4.0", "0.4.1", "0.4.2", "0.5.1", "0.5.2", "0.5.3",
+  "0.4.0", "0.4.1", "0.4.2", "0.5.1", "0.5.2", "0.5.3", "0.5.4",
 ]) {
   check(`${old} refused`, isSupportedClient(old), false);
 }

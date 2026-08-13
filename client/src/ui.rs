@@ -25,19 +25,43 @@ use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static ANSI: AtomicBool = AtomicBool::new(false);
+static UNICODE: AtomicBool = AtomicBool::new(false);
 
 /// Letterhead, matching the certificate's own masthead rather than inventing a
 /// second identity for the terminal. Kept to 43 columns so it fits an 80
 /// column console with room to indent.
+///
+/// Stored as ASCII and filled in at render time. The exe writes UTF-8, and a
+/// console whose output codepage is not UTF-8 renders every box-drawing
+/// character as two bytes of mojibake, which is a worse first impression than
+/// plain hashes. See `init`.
 const WORDMARK: [&str; 5] = [
-    " ███  ████  █   █    ███  █████ ████  █████",
-    "█     █   █ █   █   █     █     █   █   █  ",
-    "█ ██  ████  █   █   █     ████  ████    █  ",
-    "█   █ █     █   █   █     █     █  █    █  ",
-    " ███  █      ███     ███  █████ █   █   █  ",
+    " ###  ####  #   #    ###  ##### ####  #####",
+    "#     #   # #   #   #     #     #   #   #  ",
+    "# ##  ####  #   #   #     ####  ####    #  ",
+    "#   # #     #   #   #     #     #  #    #  ",
+    " ###  #      ###     ###  ##### #   #   #  ",
 ];
 
-const RULE: &str = "───────────────────────────────────────────";
+fn wordmark_row(row: &str) -> String {
+    if unicode() {
+        row.replace('#', "\u{2588}")
+    } else {
+        row.to_string()
+    }
+}
+
+/// The degree sign is also UTF-8, so it needs the same treatment as the box
+/// drawing: on a console that refused UTF-8 it would arrive as two stray
+/// bytes in the middle of a temperature.
+pub fn degree() -> &'static str {
+    if unicode() { "\u{b0}" } else { " " }
+}
+
+fn rule() -> String {
+    let ch = if unicode() { "\u{2500}" } else { "-" };
+    ch.repeat(43)
+}
 
 /// Erase from the cursor to the end of the line.
 ///
@@ -60,11 +84,47 @@ const YELLOW: &str = "\x1b[33m";
 /// place. Everything below checks this, so a `false` here is a complete
 /// fallback to plain scrolling output rather than a half-broken screen.
 pub fn init() -> bool {
+    // Asked for before anything is drawn, and the answer is believed. A
+    // console left on codepage 437 will render every block and box-drawing
+    // character as mojibake, and a screen full of garbage is a worse first
+    // impression than one made of hashes and dashes.
+    UNICODE.store(enable_utf8_output(), Ordering::Relaxed);
+
     let ok = std::io::stdout().is_terminal()
         && std::env::var_os("NO_COLOR").is_none()
         && enable_virtual_terminal();
     ANSI.store(ok, Ordering::Relaxed);
     ok
+}
+
+fn unicode() -> bool {
+    UNICODE.load(Ordering::Relaxed)
+}
+
+/// Windows consoles default to an OEM codepage, not UTF-8, and this program
+/// writes UTF-8. Setting it is the difference between a letterhead and a wall
+/// of question marks on a machine nobody here has ever seen.
+#[cfg(windows)]
+fn enable_utf8_output() -> bool {
+    use windows_sys::Win32::Globalization::CP_UTF8;
+    use windows_sys::Win32::System::Console::{GetConsoleOutputCP, SetConsoleOutputCP};
+    unsafe {
+        if GetConsoleOutputCP() == CP_UTF8 {
+            return true;
+        }
+        SetConsoleOutputCP(CP_UTF8) != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn enable_utf8_output() -> bool {
+    // Every terminal this runs on outside Windows is UTF-8, but honour an
+    // explicit non-UTF-8 locale rather than assuming.
+    std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_CTYPE"))
+        .or_else(|_| std::env::var("LANG"))
+        .map(|v| v.to_ascii_uppercase().contains("UTF"))
+        .unwrap_or(true)
 }
 
 fn ansi() -> bool {
@@ -118,11 +178,11 @@ pub fn banner(version: &str) {
     print!("\x1b[2J\x1b[H");
     println!();
     for row in WORDMARK {
-        println!("  {}", paint(BOLD, row));
+        println!("  {}", paint(BOLD, &wordmark_row(row)));
     }
     println!();
     println!("  {}", paint(DIM, &format!("Hardware Verification Certificate    v{version}")));
-    println!("  {}", paint(DIM, RULE));
+    println!("  {}", paint(DIM, &rule()));
     let _ = std::io::stdout().flush();
 }
 
@@ -248,7 +308,7 @@ impl Screen {
 
         line(&mut out, "");
         for row in WORDMARK {
-            line(&mut out, &format!("  {}", paint(BOLD, row)));
+            line(&mut out, &format!("  {}", paint(BOLD, &wordmark_row(row))));
         }
         line(&mut out, "");
         line(
@@ -258,7 +318,7 @@ impl Screen {
                 paint(DIM, &format!("Hardware Verification Certificate    v{}", self.version))
             ),
         );
-        line(&mut out, &format!("  {}", paint(DIM, RULE)));
+        line(&mut out, &format!("  {}", paint(DIM, &rule())));
 
         if !self.device.is_empty() {
             // The Vulkan device name is only shown when it differs from what
@@ -323,8 +383,9 @@ impl Screen {
 fn bar(fraction: f32) -> String {
     const WIDTH: usize = 40;
     let filled = ((fraction.clamp(0.0, 1.0) * WIDTH as f32).round() as usize).min(WIDTH);
-    let full = "█".repeat(filled);
-    let empty = "░".repeat(WIDTH - filled);
+    let (fill, blank) = if unicode() { ("\u{2588}", "\u{2591}") } else { ("#", ".") };
+    let full = fill.repeat(filled);
+    let empty = blank.repeat(WIDTH - filled);
     if ansi() {
         format!("{full}{DIM}{empty}{RESET}  {:>3}%", (fraction.clamp(0.0, 1.0) * 100.0) as u32)
     } else {
@@ -341,11 +402,11 @@ pub fn result(version: &str, verdict_pass: bool, headline: &str, lines: &[(&str,
     println!();
     if ansi() {
         for row in WORDMARK {
-            println!("  {}", paint(BOLD, row));
+            println!("  {}", paint(BOLD, &wordmark_row(row)));
         }
         println!();
         println!("  {}", paint(DIM, &format!("Hardware Verification Certificate    v{version}")));
-        println!("  {}", paint(DIM, RULE));
+        println!("  {}", paint(DIM, &rule()));
         println!();
     }
 

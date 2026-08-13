@@ -1,4 +1,5 @@
 mod account;
+mod cancel;
 mod adl;
 mod diag;
 mod fingerprint;
@@ -120,8 +121,28 @@ fn report_failure(error: &str) {
     }
 }
 
+/// Only reachable from the Windows console control handler, so a native Linux
+/// check (which is all this box can do) sees it as unused.
+#[cfg_attr(not(windows), allow(dead_code))]
+/// Called from the console control handler, which Windows gives only a few
+/// seconds before it terminates the process regardless. Everything here is
+/// therefore best effort and deliberately short: get the reason on the record,
+/// write the local log, and go.
+fn report_cancelled(reason: &str) {
+    diag::record(format!("CANCELLED: {reason}"));
+    // Local file first, network second. The local write is instant and cannot
+    // be interrupted by the deadline; a network post can, and if the order
+    // were reversed a slow connection would cost both.
+    diag::write_local_copy();
+    let session = OPEN_SESSION.lock().ok().and_then(|s| s.clone());
+    if let Some((id, nonce)) = session {
+        report::report_failure_within(&id, &nonce, reason, std::time::Duration::from_secs(3));
+    }
+}
+
 fn main() {
     diag::init();
+    cancel::install();
     let default_panic_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default_panic_hook(info);
@@ -268,8 +289,9 @@ fn run() -> anyhow::Result<()> {
                     0,
                     elapsed.as_secs_f32() / stress_duration.as_secs_f32(),
                     &format!(
-                        "{}\u{b0}C   {}% load   {} W   {} MHz core   {} MHz mem",
+                        "{}{}C   {}% load   {} W   {} MHz core   {} MHz mem",
                         sample.temperature_c,
+                        ui::degree(),
                         sample.utilization_pct,
                         sample.power_draw_mw / 1000,
                         sample.graphics_clock_mhz,
@@ -294,9 +316,10 @@ fn run() -> anyhow::Result<()> {
     screen.finish(
         0,
         &format!(
-            "{} dispatches, peak {}\u{b0}C",
+            "{} dispatches, peak {}{}C",
             stress_report.dispatch_count,
-            stress_report.telemetry_series.iter().map(|s| s.temperature_c).max().unwrap_or(0)
+            stress_report.telemetry_series.iter().map(|s| s.temperature_c).max().unwrap_or(0),
+            ui::degree()
         ),
     );
 
@@ -434,9 +457,10 @@ fn run() -> anyhow::Result<()> {
 /// finding, not a run to just discard.
 fn abort_warning(temp_c: u32) -> String {
     format!(
-        "Stopping this test: the GPU reached {temp_c}\u{b0}C, at or above the {}\u{b0}C safety \
+        "Stopping this test: the GPU reached {temp_c}{deg}C, at or above the {}{deg}C safety \
          limit. Continuing to load the card at this temperature is not safe.",
-        safety::SAFETY_ABORT_TEMP_C
+        safety::SAFETY_ABORT_TEMP_C,
+        deg = ui::degree()
     )
 }
 

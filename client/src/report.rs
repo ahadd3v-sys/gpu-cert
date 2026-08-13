@@ -464,10 +464,15 @@ pub fn start_session(
 /// Without this a crashed run leaves nothing at all, which is how two failures
 /// have already gone undiagnosed.
 pub fn report_failure(session_id: &str, nonce: &str, error: &str) {
-    let Ok(client) = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-    else {
+    report_failure_within(session_id, nonce, error, Duration::from_secs(15));
+}
+
+/// `timeout` is a parameter because the cancellation path has a hard deadline
+/// the error path does not: Windows terminates a console control handler after
+/// a few seconds whatever it is doing, so a fifteen second attempt there would
+/// simply be killed halfway and record nothing.
+pub fn report_failure_within(session_id: &str, nonce: &str, error: &str, timeout: Duration) {
+    let Ok(client) = reqwest::blocking::Client::builder().timeout(timeout).build() else {
         return;
     };
     let _ = client
