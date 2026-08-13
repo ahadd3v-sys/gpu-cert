@@ -152,6 +152,76 @@ export function checkReportConsistency(req: CertifyRequest): string[] {
   return problems;
 }
 
+/// The real test durations in the client (client/src/main.rs). A certificate is
+/// a claim about how hard the card was worked, so a run substantially shorter
+/// than these is not one, however honestly it was produced.
+///
+/// These must track the client's constants. If a release changes a duration,
+/// change it here in the same commit or every honest run starts failing.
+const REAL_TEST_DURATION_MS = {
+  stress: 5 * 60_000,
+  vram: 10 * 60_000,
+  fur: 45_000,
+} as const;
+
+/// Slack for a test that overshoots or undershoots its target slightly. Wide,
+/// because this is separating twenty seconds from ten minutes, not policing
+/// precision.
+const MIN_DURATION_RATIO = 0.5;
+
+/// Whether this run is long enough to be worth a certificate at all.
+///
+/// `--fast` exists so the client can be iterated on without burning sixteen
+/// minutes per rebuild, and it prints "not a real certificate" when it starts.
+/// The server believed otherwise: a twenty second debug run produced a signed,
+/// public, passing certificate that differed from a real one only in the
+/// duration figures printed on it. A buyer reading a bold PASS is not going to
+/// reason about "0m 20s".
+///
+/// Checked server side rather than by trusting a flag from the client, because
+/// a client that wants to lie about this would simply not send the flag.
+///
+/// A test aborted by the safety watchdog is exempt: stopping early because the
+/// card crossed 100C is a finding, and refusing to certify it would throw away
+/// the most important result the tool can produce.
+export function checkCertifiableRun(req: CertifyRequest): string[] {
+  const problems: string[] = [];
+  const tooShort = (
+    label: string,
+    actualMs: number,
+    requiredMs: number,
+    aborted: boolean
+  ) => {
+    if (aborted) return;
+    if (actualMs < requiredMs * MIN_DURATION_RATIO) {
+      problems.push(
+        `the ${label} ran ${Math.round(actualMs / 1000)}s, short of the ${Math.round(requiredMs / 1000)}s a certificate represents`
+      );
+    }
+  };
+
+  tooShort(
+    "stress test",
+    req.stress_test.duration_ms,
+    REAL_TEST_DURATION_MS.stress,
+    req.stress_test.aborted_for_safety
+  );
+  tooShort(
+    "VRAM test",
+    req.vram_test.duration_ms,
+    REAL_TEST_DURATION_MS.vram,
+    req.vram_test.aborted_for_safety
+  );
+  tooShort(
+    "render test",
+    req.fur_test.duration_ms,
+    REAL_TEST_DURATION_MS.fur,
+    req.fur_test.aborted_for_safety
+  );
+
+  return problems;
+}
+
 /// The full check: report consistency plus everything the server itself
 /// observed about the session.
 export function checkSubmission(

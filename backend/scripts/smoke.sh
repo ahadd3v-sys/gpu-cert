@@ -176,6 +176,33 @@ curl -s -o /dev/null -X POST http://localhost:3111/feedback --data-urlencode "me
 check "too-short feedback is refused" "$([ "$(kit count feedback)" = "1" ] && echo 1 || echo 0)"
 
 echo ""
+echo "debug-length runs:"
+# --fast exists for iterating on the client and prints "not a real
+# certificate". The server used to disagree and sign one anyway.
+read -r FSID FNONCE <<<"$(kit start "$FP")"
+kit backdate "$FSID" 1000 9 >/dev/null
+FAST=$(report "$FSID" "$FNONCE" \
+  | sed 's/"duration_ms":300000/"duration_ms":20000/' \
+  | sed 's/"duration_ms":600000/"duration_ms":20000/' \
+  | sed 's/"duration_ms":45000/"duration_ms":10000/')
+check "a --fast run cannot be certified" \
+  "$([ "$(post_report "$FAST")" = "422" ] && echo 1 || echo 0)"
+check "the refusal names the flag to drop" \
+  "$(curl -s -X POST http://localhost:3111/api/certify -H 'content-type: application/json' -d "$FAST" | grep -qi "without --fast" && echo 1 || echo 0)"
+
+# A run stopped by the safety watchdog is legitimately short, and it is the
+# most important result the tool produces. It must still certify.
+read -r ASID ANONCE <<<"$(kit start "$FP")"
+kit backdate "$ASID" 1000 9 >/dev/null
+ABORTED=$(report "$ASID" "$ANONCE" \
+  | sed 's/"duration_ms":300000/"duration_ms":20000/' \
+  | sed 's/"duration_ms":600000/"duration_ms":20000/' \
+  | sed 's/"duration_ms":45000/"duration_ms":10000/' \
+  | sed 's/"aborted_for_safety":false/"aborted_for_safety":true/g')
+check "a run aborted for safety still certifies" \
+  "$([ "$(post_report "$ABORTED")" = "200" ] && echo 1 || echo 0)"
+
+echo ""
 echo "client version floor:"
 # Builds before 0.5.1 report a fixed 4032 MiB of VRAM tested no matter how much
 # the card has, so they are refused at the start of a run rather than after it.

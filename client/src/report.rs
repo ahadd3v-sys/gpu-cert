@@ -118,9 +118,9 @@ pub struct CertifyResponse {
 /// staging environment yet. Revisit if/when the backend gets a staging
 /// deploy worth pointing the client at during development.
 ///
-/// Releases before v0.4.1 point at gpu-cert.vercel.app instead. That alias
-/// stays live and keeps working, so an exe already sitting on someone's
-/// desktop is not broken by the move.
+/// Releases before v0.4.1 point at gpu-cert.vercel.app instead. That alias has
+/// since been removed from the project, and those releases are refused by the
+/// backend's version floor regardless, because they misreport VRAM coverage.
 const BACKEND_BASE_URL: &str = "https://gpucert.com";
 
 /// `upload_key` is the "connect the app to your account" credential the user
@@ -331,6 +331,19 @@ impl TestSession {
         if self.last_heartbeat.get().elapsed() < self.heartbeat_interval {
             return;
         }
+        self.flush_log();
+    }
+
+    /// Sends everything logged since the last send, regardless of when the last
+    /// heartbeat was.
+    ///
+    /// Called once more just before submitting, because otherwise a successful
+    /// run uploads no log at all: heartbeats fire on an interval, so a run
+    /// shorter than one interval never sends anything, and even a long run
+    /// leaves its last interval's worth of lines on the machine. A failed run
+    /// posts its log with the failure, so success was the only path that lost
+    /// it, which is precisely backwards from useful.
+    pub fn flush_log(&self) {
         self.last_heartbeat.set(std::time::Instant::now());
 
         let all = crate::diag::snapshot();

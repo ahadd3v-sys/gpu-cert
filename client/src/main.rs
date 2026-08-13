@@ -364,6 +364,10 @@ fn run() -> anyhow::Result<()> {
     };
 
     diag::phase("submitting");
+    // Last chance to get the log off the machine while the session is still
+    // open. Heartbeats only fire on an interval, so without this a short run
+    // uploads nothing and a long one loses its final interval.
+    session.flush_log();
     println!("Submitting report...");
     let response = report::submit(&request, upload_key.as_deref())?;
     println!("Done. Report: {}", response.report_url);

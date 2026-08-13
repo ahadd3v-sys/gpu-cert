@@ -45,7 +45,7 @@ import {
   canonicalReportString,
   canonicalReportStringFromRow,
 } from "../lib/certify.js";
-import { checkSubmission } from "../lib/attestation.js";
+import { checkSubmission, checkCertifiableRun } from "../lib/attestation.js";
 import { isEmailConfigured, sendEmail, verificationEmail, passwordResetEmail } from "../lib/email.js";
 import { signReport, verifyReportSignature } from "../lib/signing.js";
 import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/password.js";
@@ -283,6 +283,22 @@ app.post("/api/certify", async (c) => {
     return c.json(
       { error: "this test session has already been used, so its certificate already exists" },
       409
+    );
+  }
+
+  // Answered in full, unlike the attestation failure below, because this is
+  // not an attack. It is a developer running --fast, and the useful response
+  // tells them why no certificate came back.
+  const tooShort = checkCertifiableRun(req);
+  if (tooShort.length > 0) {
+    return c.json(
+      {
+        error:
+          "this run was too short to certify: " +
+          tooShort.join("; ") +
+          ". Run without --fast to produce a certificate.",
+      },
+      422
     );
   }
 
