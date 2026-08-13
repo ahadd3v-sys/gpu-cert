@@ -1,0 +1,102 @@
+# Runs on every push, so a break is found at the commit that caused it rather
+# than at the release that shipped it.
+#
+# The clippy step below uses --target x86_64-pc-windows-gnu deliberately, and it
+# is the single most important line in this file. `adl.rs` is #[cfg(windows)],
+# so a native Linux check skips the entire AMD telemetry path: the client can
+# stop compiling for half its users with every local check still green. That has
+# already happened once.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Windows cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+
+      # Native, so the unit tests actually run. They cover NVML struct offsets
+      # against the real headers, memory type compatibility, render-test
+      # determinism and the streaming buffer sizing.
+      - name: Client tests
+        working-directory: client
+        run: cargo test
+
+      - name: Clippy, Windows target
+        working-directory: client
+        run: cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+
+      - name: Clippy, native
+        working-directory: client
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Catches a shader that no longer compiles to SPIR-V, which is a build
+      # script step and therefore invisible to `cargo check` alone.
+      - name: Build the Windows binary
+        working-directory: client
+        run: cargo build --release --target x86_64-pc-windows-gnu
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        working-directory: backend
+        run: npm ci
+
+      - name: Typecheck and checks
+        working-directory: backend
+        # Signing round-trip and tamper detection, migration ordering, the
+        # client version floor, and the stress scoring thresholds.
+        run: npm run check
+
+      - name: Smoke
+        working-directory: backend
+        # Boots the server against a throwaway database and exercises ingest,
+        # attestation, certificates, verification, accounts and view tracking
+        # end to end.
+        run: npm run smoke
+
+  # The version floor lives in the backend and the version it gates lives in
+  # the client, in different languages, and they have drifted before.
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The floor must not exceed the shipped client
+        run: |
+          CLIENT=$(grep -m1 '^version = ' client/Cargo.toml | cut -d'"' -f2)
+          FLOOR=$(grep -m1 'MIN_CLIENT_VERSION = ' backend/lib/client-version.ts | cut -d'"' -f2)
+          echo "client $CLIENT, floor $FLOOR"
+          # A floor above the shipped client refuses every honest run at the
+          # first request, which is the one failure nobody can work around.
+          HIGHEST=$(printf '%s\n%s\n' "$CLIENT" "$FLOOR" | sort -V | tail -1)
+          if [ "$HIGHEST" != "$CLIENT" ]; then
+            echo "::error::floor $FLOOR is above the shipped client $CLIENT"
+            exit 1
+          fi

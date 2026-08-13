@@ -1,0 +1,114 @@
+# Builds the released exe in public, from public source, at a known commit.
+#
+# The point is not convenience. The client is an unsigned Windows binary that
+# reads your hardware and sends a report somewhere, which is indistinguishable
+# from malware by inspection, and the honest answer to "why should I run this"
+# has so far been "read the source" followed by "trust that the exe I uploaded
+# was built from it". That second half is the gap.
+#
+# A build here closes it. The binary is produced on a clean machine from a
+# specific commit, and attest-build-provenance signs a statement to that effect
+# that anyone can check:
+#
+#     gh attestation verify gpu-cert.exe --repo <owner>/gpu-cert
+#
+# That turns "trust me" into something a stranger can verify for themselves,
+# which is the argument that has to work on people who have never heard of us.
+# It does not remove Windows SmartScreen; only a code signing certificate does
+# that, and that is a separate decision.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag is what people download; Cargo.toml is what the client reports
+      # and what the backend's version floor is compared against. A mismatch
+      # means the release everyone is told to install identifies itself as
+      # something else, and the floor lets in or turns away the wrong build.
+      - name: The tag must match the client version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO=$(grep -m1 '^version = ' client/Cargo.toml | cut -d'"' -f2)
+          echo "tag $TAG, Cargo.toml $CARGO"
+          if [ "$TAG" != "$CARGO" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match client version $CARGO"
+            exit 1
+          fi
+
+      - name: Install the Windows cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+          components: clippy
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # Everything CI runs, again, because a tag can be pushed at a commit CI
+      # never saw and this is the artifact people actually run.
+      - name: Client tests
+        working-directory: client
+        run: cargo test
+
+      - name: Clippy, Windows target
+        working-directory: client
+        run: cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+
+      - name: Backend checks
+        working-directory: backend
+        run: npm ci && npm run check && npm run smoke
+
+      # x86_64-pc-windows-gnu, not msvc, and deliberately so. Every run that has
+      # ever succeeded on real hardware was a GNU build; switching toolchain at
+      # the same moment CI is introduced would invalidate all of that evidence
+      # to fix nothing.
+      - name: Build
+        working-directory: client
+        run: cargo build --release --target x86_64-pc-windows-gnu
+
+      - name: Checksum
+        run: |
+          cp client/target/x86_64-pc-windows-gnu/release/gpu-cert.exe .
+          sha256sum gpu-cert.exe | tee SHA256SUMS.txt
+
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: gpu-cert.exe
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" gpu-cert.exe SHA256SUMS.txt \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "Built by GitHub Actions from \`$GITHUB_SHA\`.
+
+          Verify this binary was built from this repository:
+
+          \`\`\`
+          gh attestation verify gpu-cert.exe --repo $GITHUB_REPOSITORY
+          \`\`\`
+
+          Windows only, NVIDIA or AMD. About eleven minutes. The exe is
+          unsigned, so Windows will warn on first run: choose More info, then
+          Run anyway."
