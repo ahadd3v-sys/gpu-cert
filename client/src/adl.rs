@@ -329,7 +329,7 @@ impl Adl {
                     candidates.push((info.adapter_index, mem.memory_size, name));
                 }
             }
-            candidates.sort_by(|a, b| b.1.cmp(&a.1));
+            candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
 
             let mut chosen: Option<c_int> = None;
             for (idx, vram, name) in &candidates {
@@ -464,6 +464,12 @@ impl Adl {
                 uuid: udid,
                 name,
                 pci_device_id,
+                // The real PCI-SIG value, not ADL's `iVendorID`. Those are
+                // not the same number here: ADL reports the vendor as the
+                // decimal 1002 (see AMD_VENDOR_ID above), while Vulkan's
+                // `VkPhysicalDeviceProperties::vendorID` reports the actual
+                // hex 0x1002 that this is matched against.
+                pci_vendor_id: 0x1002,
                 vbios_version,
                 vram_total_bytes: mem.memory_size.max(0) as u64,
                 temperature_c: temperature_c as u32,

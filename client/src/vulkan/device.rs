@@ -48,8 +48,29 @@ pub struct VulkanContext {
     pub memory_budget_supported: bool,
 }
 
+/// Identifies the card the vendor telemetry (NVML or ADL) is describing, so
+/// the Vulkan device the tests actually run against can be confirmed to be
+/// the same one.
+pub struct GpuSelector {
+    pub vendor_id: u32,
+    pub device_id: u32,
+    pub name: String,
+}
+
 impl VulkanContext {
-    pub fn new() -> anyhow::Result<Self> {
+    /// `want` is the card the telemetry backend found. Matching against it
+    /// is not a nicety: the certificate names a specific GPU, and running
+    /// the tests on a different one would produce a document that is wrong
+    /// in the most damaging way available, by attesting to hardware that was
+    /// never tested.
+    ///
+    /// This is a live risk rather than a theoretical one. Taking Vulkan
+    /// device 0 is only correct when there is one GPU. On a laptop with
+    /// switchable graphics, the integrated GPU frequently enumerates first
+    /// while NVML reports the discrete NVIDIA card, so the old code would
+    /// have stress-tested an Intel iGPU and issued a certificate for the
+    /// GeForce next to it.
+    pub fn new(want: &GpuSelector) -> anyhow::Result<Self> {
         unsafe {
             let entry = ash::Entry::load()
                 .map_err(|e| anyhow::anyhow!("failed to load Vulkan loader: {e}"))?;
@@ -65,12 +86,60 @@ impl VulkanContext {
             let physical_devices = instance
                 .enumerate_physical_devices()
                 .map_err(|e| anyhow::anyhow!("vkEnumeratePhysicalDevices failed: {e:?}"))?;
-            // Phase 1 certifies whatever GPU is primary/index 0. Letting the
-            // user pick among multiple GPUs is a product decision, deferred
-            // alongside the same question in nvml.rs.
-            let physical_device = *physical_devices
-                .first()
-                .ok_or_else(|| anyhow::anyhow!("no Vulkan-capable devices found"))?;
+            if physical_devices.is_empty() {
+                anyhow::bail!("no Vulkan-capable devices found");
+            }
+
+            // Exact (vendor, device) first. Falling back to vendor alone
+            // covers the case where a backend's device ID is parsed slightly
+            // differently from what Vulkan reports, while still guaranteeing
+            // the right physical card among a mixed-vendor pair, which is the
+            // failure that actually matters.
+            let described: Vec<(vk::PhysicalDevice, vk::PhysicalDeviceProperties)> =
+                physical_devices
+                    .iter()
+                    .map(|&pd| (pd, instance.get_physical_device_properties(pd)))
+                    .collect();
+
+            let exact = described
+                .iter()
+                .find(|(_, p)| p.vendor_id == want.vendor_id && p.device_id == want.device_id);
+            let same_vendor = described
+                .iter()
+                .filter(|(_, p)| p.vendor_id == want.vendor_id)
+                // A discrete part in preference to an integrated one from the
+                // same vendor, which is how an AMD APU plus an AMD dGPU
+                // presents.
+                .max_by_key(|(_, p)| {
+                    u8::from(p.device_type == vk::PhysicalDeviceType::DISCRETE_GPU)
+                });
+
+            let physical_device = match exact.or(same_vendor) {
+                Some((pd, _)) => *pd,
+                None => {
+                    let seen = described
+                        .iter()
+                        .map(|(_, p)| {
+                            format!(
+                                "{} (vendor 0x{:04X}, device 0x{:04X})",
+                                CStr::from_ptr(p.device_name.as_ptr()).to_string_lossy(),
+                                p.vendor_id,
+                                p.device_id
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    anyhow::bail!(
+                        "the GPU the driver reports ({}, vendor 0x{:04X}, device 0x{:04X}) isn't among \
+                         the Vulkan devices available [{seen}].\n  Refusing to continue: testing a \
+                         different GPU than the one named on the certificate would make the \
+                         certificate wrong.",
+                        want.name,
+                        want.vendor_id,
+                        want.device_id
+                    );
+                }
+            };
 
             let props = instance.get_physical_device_properties(physical_device);
             let device_name = CStr::from_ptr(props.device_name.as_ptr())

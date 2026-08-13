@@ -6,6 +6,51 @@ broken, what was tried, and why.
 
 ---
 
+## 2026-08-13 — v0.3.0: audited the NVML path before its first run. It had a silent fingerprint bug.
+
+An NVIDIA run is coming, and that path had never executed. Rather than spend
+someone else's hardware run discovering things, this is a static audit of
+`nvml.rs` against the real `nvml.h`. It found three things worth having
+caught beforehand, one of which would never have announced itself.
+
+**`nvmlPciInfo_t` was decoded at the wrong offsets.** The struct was declared
+opening with a 32-byte `bus_id`. In `nvml.h` it opens with
+`busIdLegacy[NVML_DEVICE_PCI_BUS_ID_BUFFER_V2_SIZE]`, which is **16** bytes,
+and the 32-byte `busId` comes last, after the integers. Every integer was
+therefore read 16 bytes late, and `pciDeviceId` landed inside the trailing
+`busId` string: the value feeding the hardware fingerprint would have been
+four bytes of ASCII bus-address text read as an integer. No call fails, no
+error surfaces, and the certificate looks entirely normal. Struct offsets are
+now pinned by a unit test, and since the low half of `pciDeviceId` must be
+NVIDIA's `0x10DE`, a mismatch there now aborts with a message naming the real
+cause instead of poisoning the report.
+
+**NVML and Vulkan do not agree on which GPU is "device 0".** Telemetry came
+from NVML index 0 while the tests ran on Vulkan physical device 0, with
+nothing tying them together. On a laptop with switchable graphics the
+integrated GPU commonly enumerates first, so the client would have stress
+tested an Intel iGPU and issued a certificate for the GeForce beside it.
+`VulkanContext::new` now takes a `GpuSelector` and matches on
+(vendor, device), preferring a discrete part within a vendor, and **refuses
+to run** if it cannot find the card the telemetry describes. Certifying
+untested hardware is the one failure this product cannot ship with.
+
+**One unsupported sensor killed the whole run.** Every NVML read was
+required, so a single `NVML_ERROR_NOT_SUPPORTED` from, say,
+`nvmlDeviceGetPowerUsage` aborted 16 minutes of work. Exactly the mistake the
+AMD path already made once with VBIOS version. Identity and temperature (the
+safety watchdog needs it) stay required; power, clocks, utilization, VBIOS
+and PCIe widths now degrade. PCIe widths are read as an all-or-nothing pair,
+because a successful current alongside a failed max reads as "x8 of x0" and
+would have **false-failed a healthy card**.
+
+Also normalized `pci_device_id` across vendors: NVML packs device and vendor
+into one 32-bit value while ADL parses the bare device ID out of a PnP
+string, so the certificate's "PCI Device ID" row would have been 8 hex digits
+on NVIDIA and 4 on AMD. It is the bare device ID on both now.
+
+---
+
 ## 2026-08-13 — v0.2.0 confirmed working on the RX 6600. v0.2.1 raises VRAM coverage.
 
 First clean run: **Pass, 0 VRAM errors, 0 render mismatches** (report

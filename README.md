@@ -290,8 +290,29 @@ cost several wasted hardware runs each:
 - **Reproducing GPU float math on the CPU is not achievable.** See the render
   integrity note above.
 
-Still unverified against real hardware: the NVIDIA path (NVML) has no real
-run yet, only AMD (ADL); AMD's degraded-PCIe-link check is deliberately
-inert because ADL exposes no verified max-lane-count call; and the
-100°C watchdog and the stress-telemetry thresholds in `stress-analysis.ts`
-remain conservative estimates rather than calibrated numbers.
+The NVIDIA path was then audited statically against `nvml.h` ahead of its
+first run, which found the same class of problem before it cost a run:
+
+- **`nvmlPciInfo_t` was decoded at the wrong offsets.** Its first field is
+  `busIdLegacy[16]`, not the 32-byte `busId` (which comes last), so every
+  integer was read 16 bytes late and `pciDeviceId` came out of the middle of
+  a string. The hardware fingerprint would have been silently meaningless on
+  every NVIDIA card. Offsets are pinned by a test now, and the vendor half of
+  `pciDeviceId` is checked against NVIDIA's `0x10DE` so a future layout
+  mistake fails loudly instead of quietly.
+- **NVML index 0 and Vulkan device 0 are not necessarily the same GPU.** On a
+  laptop with switchable graphics the iGPU often enumerates first, which
+  would have meant testing an Intel iGPU and certifying the GeForce beside
+  it. The Vulkan device is now matched to the telemetry by (vendor, device)
+  and the run refuses to start if the described card isn't there.
+- **A single unsupported sensor aborted the whole run.** Optional telemetry
+  now degrades instead, and PCIe link widths are read as an all-or-nothing
+  pair (a good "current" with a failed "max" would have false-failed a
+  healthy card).
+
+Still unverified against real hardware: the NVIDIA path has still never
+actually executed, only been audited; the full-length (non-`--fast`) protocol
+has never run end to end; AMD's degraded-PCIe-link check is deliberately
+inert because ADL exposes no verified max-lane-count call; and the 100°C
+watchdog and the stress-telemetry thresholds in `stress-analysis.ts` remain
+conservative estimates rather than calibrated numbers.

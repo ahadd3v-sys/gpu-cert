@@ -45,12 +45,10 @@ fn load_gpu_backend() -> anyhow::Result<GpuBackend> {
     #[cfg(target_os = "windows")]
     {
         match adl::Adl::load() {
-            Ok(a) => return Ok(GpuBackend::Adl(a)),
-            Err(adl_err) => {
-                return Err(anyhow::anyhow!(
-                    "no supported GPU found.\n  NVIDIA (NVML): {nvml_err}\n  AMD (ADL): {adl_err}"
-                ));
-            }
+            Ok(a) => Ok(GpuBackend::Adl(a)),
+            Err(adl_err) => Err(anyhow::anyhow!(
+                "no supported GPU found.\n  NVIDIA (NVML): {nvml_err}\n  AMD (ADL): {adl_err}"
+            )),
         }
     }
 
@@ -158,7 +156,14 @@ fn run() -> anyhow::Result<()> {
     let fingerprint = Fingerprint::from_telemetry(&telemetry);
     println!("Fingerprint: {}", fingerprint.hash);
 
-    let ctx = VulkanContext::new()?;
+    // Matched against the telemetry rather than taken as device 0, so the
+    // card being tested is provably the card being certified. See
+    // VulkanContext::new.
+    let ctx = VulkanContext::new(&vulkan::GpuSelector {
+        vendor_id: telemetry.pci_vendor_id,
+        device_id: telemetry.pci_device_id,
+        name: telemetry.name.clone(),
+    })?;
     println!("Vulkan device: {}", ctx.device_name);
 
     // Asked here, after we know there's a working GPU to test but before the

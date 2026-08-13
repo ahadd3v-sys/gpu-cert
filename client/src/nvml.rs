@@ -25,19 +25,83 @@ const NVML_LIB_NAME: &str = "libnvidia-ml.so.1";
 const NVML_SUCCESS: i32 = 0;
 const NVML_DEVICE_UUID_BUFFER_SIZE: usize = 80;
 const NVML_DEVICE_VBIOS_VERSION_BUFFER_SIZE: usize = 32;
+const NVML_DEVICE_NAME_V2_BUFFER_SIZE: usize = 96;
+const NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE: usize = 32;
+const NVML_DEVICE_PCI_BUS_ID_BUFFER_V2_SIZE: usize = 16;
+
+/// PCI-SIG vendor ID for NVIDIA. Used to confirm the Vulkan device the tests
+/// actually run against is the same card NVML is reporting telemetry for.
+pub const NVIDIA_VENDOR_ID: u32 = 0x10DE;
+
+/// Turns an `nvmlReturn_t` into something a person can act on. A bare
+/// "rc=3" tells whoever is running this nothing; "not supported on this
+/// device" tells them it is their card, not a broken build.
+fn nvml_error_name(rc: i32) -> &'static str {
+    match rc {
+        1 => "NVML was not initialized",
+        2 => "invalid argument",
+        3 => "not supported on this device",
+        4 => "no permission",
+        6 => "not found",
+        7 => "insufficient buffer size",
+        8 => "external power cables not properly attached",
+        9 => "NVIDIA driver is not loaded",
+        10 => "timeout",
+        11 => "kernel interrupt issue with the GPU",
+        12 => "NVML shared library not found",
+        13 => "this driver's NVML doesn't implement that function",
+        14 => "corrupted infoROM",
+        15 => "the GPU has fallen off the bus",
+        16 => "the GPU requires a reset",
+        17 => "the GPU has been blocked by the operating system",
+        18 => "driver/library version mismatch",
+        19 => "the GPU is in use",
+        20 => "insufficient memory",
+        21 => "no data",
+        _ => "unknown error",
+    }
+}
 
 type NvmlDevice = *mut c_void;
 
+/// Mirrors `nvmlPciInfo_t` from nvml.h exactly. The field order matters more
+/// than it looks: the struct opens with `busIdLegacy`, which is
+/// `NVML_DEVICE_PCI_BUS_ID_BUFFER_V2_SIZE` = **16** bytes, and the 32-byte
+/// `busId` comes *last*, after the integers.
+///
+/// This was previously declared with a 32-byte buffer first, which pushed
+/// every integer 16 bytes past where NVML writes it. `pci_device_id` then
+/// read from inside the trailing `busId` string, so the value feeding the
+/// hardware fingerprint was four bytes of ASCII bus-address text
+/// reinterpreted as a number. Nothing would have errored; the fingerprint
+/// would just have been quietly meaningless on every NVIDIA card.
+///
+/// ```text
+/// offset  field
+///      0  busIdLegacy[16]
+///     16  domain
+///     20  bus
+///     24  device
+///     28  pciDeviceId
+///     32  pciSubSystemId
+///     36  busId[32]
+///     68  (end)
+/// ```
 #[repr(C)]
 struct NvmlPciInfo {
-    bus_id: [c_char; 32],
+    bus_id_legacy: [c_char; NVML_DEVICE_PCI_BUS_ID_BUFFER_V2_SIZE],
     domain: c_uint,
     bus: c_uint,
     device: c_uint,
+    /// The combined 16-bit device id and 16-bit vendor id, device in the
+    /// high half. Not the bare device id, which is what the certificate
+    /// wants and what the AMD path already produces.
     pci_device_id: c_uint,
     pci_sub_system_id: c_uint,
-    // trailing legacy fields omitted; NVML only reads bus_id..pci_device_id
-    // for our purposes and the struct is over-allocated defensively below.
+    bus_id: [c_char; NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE],
+    /// Slack for a future NVML revision appending fields. NVML writes only
+    /// as much as its own struct defines, so over-allocating is free
+    /// insurance against a newer driver writing past what this knows about.
     _reserved: [u8; 64],
 }
 
@@ -59,7 +123,15 @@ struct NvmlUtilization {
 pub struct GpuTelemetry {
     pub uuid: String,
     pub name: String,
+    /// The bare 16-bit PCI device ID (e.g. `0x2786`), normalized to mean the
+    /// same thing on both vendor backends. NVML reports device and vendor
+    /// packed into one 32-bit value and ADL parses the device ID out of a
+    /// PnP string, so without normalizing here the certificate's "PCI Device
+    /// ID" row would be an 8-digit number on NVIDIA and a 4-digit one on AMD.
     pub pci_device_id: u32,
+    /// PCI-SIG vendor ID. Not shown on the certificate; used to verify the
+    /// Vulkan device under test is the card this telemetry describes.
+    pub pci_vendor_id: u32,
     pub vbios_version: String,
     pub vram_total_bytes: u64,
     pub temperature_c: u32,
@@ -188,19 +260,39 @@ impl Nvml {
             let mut device: NvmlDevice = std::ptr::null_mut();
             check((self.device_get_handle)(0, &mut device))?;
 
+            // Identity, and the temperature the safety watchdog depends on,
+            // are required: without them there is nothing to put on a
+            // certificate, and no way to stop before cooking the card.
             let uuid = self.read_string(device, &self.device_get_uuid, NVML_DEVICE_UUID_BUFFER_SIZE)?;
-            let name = self.read_string(device, &self.device_get_name, 96)?;
+            let name =
+                self.read_string(device, &self.device_get_name, NVML_DEVICE_NAME_V2_BUFFER_SIZE)?;
 
             let mut pci = NvmlPciInfo {
-                bus_id: [0; 32],
+                bus_id_legacy: [0; NVML_DEVICE_PCI_BUS_ID_BUFFER_V2_SIZE],
                 domain: 0,
                 bus: 0,
                 device: 0,
                 pci_device_id: 0,
                 pci_sub_system_id: 0,
+                bus_id: [0; NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE],
                 _reserved: [0; 64],
             };
             check((self.device_get_pci_info)(device, &mut pci))?;
+
+            // A self-check on the FFI layout, not on the hardware. The low
+            // half of pciDeviceId is the PCI vendor ID, and on an NVML device
+            // it can only ever be NVIDIA's. If it isn't, this struct's fields
+            // are being read at the wrong offsets, which is precisely the bug
+            // that shipped here before (a 32-byte leading buffer where nvml.h
+            // has 16). That version failed silently and poisoned the hardware
+            // fingerprint, so it fails loudly now.
+            let vendor_id = pci.pci_device_id & 0xFFFF;
+            if vendor_id != NVIDIA_VENDOR_ID {
+                anyhow::bail!(
+                    "NVML returned PCI vendor 0x{vendor_id:04X}, expected NVIDIA's 0x{NVIDIA_VENDOR_ID:04X}. \
+                     This means nvmlPciInfo_t is being decoded at the wrong offsets, not that the card is unusual."
+                );
+            }
 
             let mut mem = NvmlMemoryInfo { total: 0, free: 0, used: 0 };
             check((self.device_get_memory_info)(device, &mut mem))?;
@@ -208,37 +300,53 @@ impl Nvml {
             let mut temp: c_uint = 0;
             check((self.device_get_temperature)(device, NVML_TEMPERATURE_GPU, &mut temp))?;
 
-            let mut power: c_uint = 0;
-            check((self.device_get_power_usage)(device, &mut power))?;
-
-            let mut gfx_clock: c_uint = 0;
-            check((self.device_get_clock_info)(device, NVML_CLOCK_GRAPHICS, &mut gfx_clock))?;
-
-            let mut mem_clock: c_uint = 0;
-            check((self.device_get_clock_info)(device, NVML_CLOCK_MEM, &mut mem_clock))?;
+            // Everything below is telemetry the report is richer for having
+            // and still valid without. Aborting a 16-minute run because one
+            // optional sensor returned NOT_SUPPORTED would be the same
+            // mistake the AMD path already made once with VBIOS version.
+            // The backend's scoring already treats a zero clock series as
+            // "no data" rather than as a failure.
+            let power = self.read_optional_uint(|out| (self.device_get_power_usage)(device, out));
+            let gfx_clock = self
+                .read_optional_uint(|out| (self.device_get_clock_info)(device, NVML_CLOCK_GRAPHICS, out));
+            let mem_clock = self
+                .read_optional_uint(|out| (self.device_get_clock_info)(device, NVML_CLOCK_MEM, out));
 
             let mut utilization = NvmlUtilization { gpu: 0, memory: 0 };
-            check((self.device_get_utilization_rates)(device, &mut utilization))?;
+            if (self.device_get_utilization_rates)(device, &mut utilization) != NVML_SUCCESS {
+                utilization = NvmlUtilization { gpu: 0, memory: 0 };
+            }
 
-            let vbios_version =
-                self.read_string(device, &self.device_get_vbios, NVML_DEVICE_VBIOS_VERSION_BUFFER_SIZE)?;
+            let vbios_version = self
+                .read_string(device, &self.device_get_vbios, NVML_DEVICE_VBIOS_VERSION_BUFFER_SIZE)
+                .unwrap_or_else(|_| "unknown".to_string());
 
-            let mut pcie_current: c_uint = 0;
-            check((self.device_get_curr_pcie_link_width)(device, &mut pcie_current))?;
-
-            let mut pcie_max: c_uint = 0;
-            check((self.device_get_max_pcie_link_width)(device, &mut pcie_max))?;
+            // Read as a pair, all-or-nothing. Taken independently, a
+            // successful "current = 8" alongside a failed "max = 0" would
+            // read as a card whose link is fine, while a failed current
+            // against a good max would report x0 of x16 and fail a healthy
+            // card outright. Neither known is the only honest state.
+            let pcie_current =
+                self.read_optional_uint(|out| (self.device_get_curr_pcie_link_width)(device, out));
+            let pcie_max =
+                self.read_optional_uint(|out| (self.device_get_max_pcie_link_width)(device, out));
+            let (pcie_current, pcie_max) = match (pcie_current, pcie_max) {
+                (Some(c), Some(m)) => (c, m),
+                _ => (0, 0),
+            };
 
             Ok(GpuTelemetry {
                 uuid,
                 name,
-                pci_device_id: pci.pci_device_id,
+                // High half is the device ID, low half the vendor ID.
+                pci_device_id: pci.pci_device_id >> 16,
+                pci_vendor_id: pci.pci_device_id & 0xFFFF,
                 vbios_version,
                 vram_total_bytes: mem.total,
                 temperature_c: temp,
-                power_draw_mw: power,
-                graphics_clock_mhz: gfx_clock,
-                memory_clock_mhz: mem_clock,
+                power_draw_mw: power.unwrap_or(0),
+                graphics_clock_mhz: gfx_clock.unwrap_or(0),
+                memory_clock_mhz: mem_clock.unwrap_or(0),
                 // Clamp defensively: NVML's `utilization.gpu` is documented
                 // as a 0-100 percentage, but glitchy drivers have been
                 // observed to return transient out-of-range values. This is
@@ -248,6 +356,17 @@ impl Nvml {
                 pcie_link_width_current: pcie_current,
                 pcie_link_width_max: pcie_max,
             })
+        }
+    }
+
+    /// Runs an NVML getter that writes a single `unsigned int`, returning
+    /// `None` rather than an error when the driver says it isn't supported.
+    unsafe fn read_optional_uint(&self, mut call: impl FnMut(*mut c_uint) -> i32) -> Option<u32> {
+        let mut value: c_uint = 0;
+        if call(&mut value) == NVML_SUCCESS {
+            Some(value)
+        } else {
+            None
         }
     }
 
@@ -277,6 +396,49 @@ fn check(rc: i32) -> anyhow::Result<()> {
     if rc == NVML_SUCCESS {
         Ok(())
     } else {
-        anyhow::bail!("NVML call failed: rc={rc}")
+        anyhow::bail!("NVML call failed: {} (rc={rc})", nvml_error_name(rc))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins `nvmlPciInfo_t`'s layout against nvml.h. These offsets are the
+    /// difference between a correct hardware fingerprint and four bytes of
+    /// ASCII bus-address text reinterpreted as an integer, and getting them
+    /// wrong produces no error at runtime on any card — the previous version
+    /// of this struct shipped with a 32-byte leading buffer where the header
+    /// has 16, and nothing anywhere would have caught it.
+    #[test]
+    fn pci_info_matches_nvml_header_layout() {
+        use std::mem::offset_of;
+        assert_eq!(offset_of!(NvmlPciInfo, bus_id_legacy), 0);
+        assert_eq!(offset_of!(NvmlPciInfo, domain), 16);
+        assert_eq!(offset_of!(NvmlPciInfo, bus), 20);
+        assert_eq!(offset_of!(NvmlPciInfo, device), 24);
+        assert_eq!(offset_of!(NvmlPciInfo, pci_device_id), 28);
+        assert_eq!(offset_of!(NvmlPciInfo, pci_sub_system_id), 32);
+        assert_eq!(offset_of!(NvmlPciInfo, bus_id), 36);
+        // Must be at least the 68 bytes nvml.h defines, so NVML can never
+        // write past what was allocated.
+        assert!(std::mem::size_of::<NvmlPciInfo>() >= 68);
+    }
+
+    #[test]
+    fn memory_info_matches_nvml_header_layout() {
+        use std::mem::offset_of;
+        assert_eq!(offset_of!(NvmlMemoryInfo, total), 0);
+        assert_eq!(offset_of!(NvmlMemoryInfo, free), 8);
+        assert_eq!(offset_of!(NvmlMemoryInfo, used), 16);
+    }
+
+    /// pciDeviceId packs the device ID in the high half and the vendor ID in
+    /// the low half. An RTX 4070 reports 0x278610DE.
+    #[test]
+    fn splits_packed_pci_id() {
+        let packed: u32 = 0x2786_10DE;
+        assert_eq!(packed >> 16, 0x2786);
+        assert_eq!(packed & 0xFFFF, NVIDIA_VENDOR_ID);
     }
 }
