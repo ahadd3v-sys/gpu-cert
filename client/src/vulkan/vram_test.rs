@@ -67,11 +67,19 @@ pub fn run(
         vk::BufferUsageFlags::STORAGE_BUFFER,
         ctx.host_visible_memory_type,
     )?;
+    // Diagnostic-only (idx, actual, expected) for the first mismatch a pass
+    // finds — see the shader for why this is worth the extra buffer.
+    let first_mismatch_buffer = GpuBuffer::new(
+        ctx,
+        12,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        ctx.host_visible_memory_type,
+    )?;
 
     let kernel = ComputeKernel::new(
         ctx,
         VRAM_PATTERN_COMP_SPV,
-        2,
+        3,
         std::mem::size_of::<PushConstants>() as u32,
     )?;
 
@@ -86,15 +94,35 @@ pub fn run(
             let seed = (started.elapsed().as_nanos() as u32) ^ passes_run.wrapping_mul(0x9E3779B9);
 
             reset_error_counter(ctx, &error_buffer)?;
+            reset_first_mismatch(ctx, &first_mismatch_buffer)?;
 
             let fill_push = PushConstants { mode: MODE_FILL, seed, length: element_count };
-            kernel.dispatch(ctx, &[&data_buffer, &error_buffer], as_bytes(&fill_push), workgroups)?;
+            kernel.dispatch(
+                ctx,
+                &[&data_buffer, &error_buffer, &first_mismatch_buffer],
+                as_bytes(&fill_push),
+                workgroups,
+            )?;
 
             let verify_push = PushConstants { mode: MODE_VERIFY, seed, length: element_count };
-            kernel.dispatch(ctx, &[&data_buffer, &error_buffer], as_bytes(&verify_push), workgroups)?;
+            kernel.dispatch(
+                ctx,
+                &[&data_buffer, &error_buffer, &first_mismatch_buffer],
+                as_bytes(&verify_push),
+                workgroups,
+            )?;
 
-            total_errors += read_error_counter(ctx, &error_buffer)? as u64;
+            let pass_errors = read_error_counter(ctx, &error_buffer)?;
+            total_errors += pass_errors as u64;
             passes_run += 1;
+            if pass_errors > 0 {
+                let [idx, actual, expected] = read_first_mismatch(ctx, &first_mismatch_buffer)?;
+                println!(
+                    "\n  pass {passes_run}: {pass_errors} error(s), seed=0x{seed:08x}, first at idx={idx} \
+                     (of {element_count}) actual=0x{actual:08x} expected=0x{expected:08x} xor=0x{:08x}",
+                    actual ^ expected
+                );
+            }
             if !on_pass(passes_run, total_errors, started.elapsed()) {
                 aborted_for_safety = true;
                 break;
@@ -106,6 +134,7 @@ pub fn run(
     kernel.destroy(ctx);
     data_buffer.destroy(ctx);
     error_buffer.destroy(ctx);
+    first_mismatch_buffer.destroy(ctx);
 
     result?;
 
@@ -143,5 +172,29 @@ fn read_error_counter(ctx: &VulkanContext, buf: &GpuBuffer) -> anyhow::Result<u3
         let value = std::ptr::read(ptr as *const u32);
         ctx.device.unmap_memory(buf.memory);
         Ok(value)
+    }
+}
+
+fn reset_first_mismatch(ctx: &VulkanContext, buf: &GpuBuffer) -> anyhow::Result<()> {
+    unsafe {
+        let ptr = ctx
+            .device
+            .map_memory(buf.memory, 0, buf.size, vk::MemoryMapFlags::empty())
+            .map_err(|e| anyhow::anyhow!("vkMapMemory failed: {e:?}"))?;
+        std::ptr::write_bytes(ptr as *mut u8, 0, buf.size as usize);
+        ctx.device.unmap_memory(buf.memory);
+    }
+    Ok(())
+}
+
+fn read_first_mismatch(ctx: &VulkanContext, buf: &GpuBuffer) -> anyhow::Result<[u32; 3]> {
+    unsafe {
+        let ptr = ctx
+            .device
+            .map_memory(buf.memory, 0, buf.size, vk::MemoryMapFlags::empty())
+            .map_err(|e| anyhow::anyhow!("vkMapMemory failed: {e:?}"))?;
+        let values = std::ptr::read(ptr as *const [u32; 3]);
+        ctx.device.unmap_memory(buf.memory);
+        Ok(values)
     }
 }

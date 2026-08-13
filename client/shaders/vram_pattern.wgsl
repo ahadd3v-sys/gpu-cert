@@ -32,6 +32,16 @@ var<storage, read_write> values: array<u32>;
 @group(0) @binding(1)
 var<storage, read_write> error_count: atomic<u32>;
 
+// Diagnostic only, not part of the pass/fail signal: (idx, actual, expected)
+// for whichever mismatch happens to win the race to be "first" this verify
+// dispatch. Lets the host print a concrete example instead of just a raw
+// count — the difference between "the pattern-generation logic itself is
+// wrong" (every mismatch looks related to idx/seed in a consistent way) and
+// "this address is really bad" (one-off, unrelated to any encoding bug) is
+// invisible from a bare error count alone.
+@group(0) @binding(2)
+var<storage, read_write> first_mismatch: array<u32, 3>;
+
 var<push_constant> pc: PushConstants;
 
 fn expected_pattern(idx: u32) -> u32 {
@@ -55,8 +65,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (pc.mode == MODE_FILL) {
         values[idx] = expected_pattern(idx);
     } else {
-        if (values[idx] != expected_pattern(idx)) {
-            atomicAdd(&error_count, 1u);
+        let actual = values[idx];
+        let expect = expected_pattern(idx);
+        if (actual != expect) {
+            let prev = atomicAdd(&error_count, 1u);
+            if (prev == 0u) {
+                first_mismatch[0] = idx;
+                first_mismatch[1] = actual;
+                first_mismatch[2] = expect;
+            }
         }
     }
 }
