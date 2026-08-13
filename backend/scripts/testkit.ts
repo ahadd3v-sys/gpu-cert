@@ -81,6 +81,23 @@ switch (command) {
     process.stdout.write(await createEmailToken(args[0], args[1] as "verify" | "reset", 60));
     break;
   }
+  case "views": {
+    // args: reportId, kind
+    const res = await db.execute({
+      sql: "SELECT COUNT(*) AS n FROM report_views WHERE report_id = ? AND kind = ?",
+      args: [args[0], args[1]],
+    });
+    process.stdout.write(String(res.rows[0]!.n));
+    break;
+  }
+  case "referrers": {
+    const res = await db.execute({
+      sql: "SELECT COALESCE(referrer_host,'direct') AS h FROM report_views WHERE report_id = ?",
+      args: [args[0]],
+    });
+    process.stdout.write(res.rows.map((r) => r.h).join(","));
+    break;
+  }
   default:
     throw new Error(`unknown command: ${command}`);
 }

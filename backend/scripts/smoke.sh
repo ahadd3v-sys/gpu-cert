@@ -149,6 +149,21 @@ curl -s -o /dev/null -X POST http://localhost:3111/feedback --data-urlencode "me
 check "too-short feedback is refused" "$([ "$(kit count feedback)" = "1" ] && echo 1 || echo 0)"
 
 echo ""
+echo "view tracking:"
+BROWSER="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+curl -s -o /dev/null -A "$BROWSER" -e "https://www.reddit.com/r/hardwareswap/comments/x" "http://localhost:3111/r/$PASS_ID"
+check "a real visit is counted" "$([ "$(kit views "$PASS_ID" page)" = "1" ] && echo 1 || echo 0)"
+check "the referring site is recorded" "$([ "$(kit referrers "$PASS_ID")" = "reddit.com" ] && echo 1 || echo 0)"
+
+# curl's own UA matches the crawler filter, as do Discord and Slack unfurls.
+curl -s -o /dev/null "http://localhost:3111/r/$PASS_ID"
+curl -s -o /dev/null -A "Mozilla/5.0 (compatible; Discordbot/2.0)" "http://localhost:3111/r/$PASS_ID"
+check "crawlers and link previews are not counted" "$([ "$(kit views "$PASS_ID" page)" = "1" ] && echo 1 || echo 0)"
+
+curl -s -o /dev/null -A "$BROWSER" "http://localhost:3111/r/$PASS_ID/badge"
+check "badge impressions are counted separately" "$([ "$(kit views "$PASS_ID" badge)" = "1" ] && echo 1 || echo 0)"
+
+echo ""
 echo "accounts:"
 curl -s -c "$SCRATCH/jar" -o /dev/null -X POST http://localhost:3111/signup \
   --data-urlencode "email=owner@example.com" --data-urlencode "password=correcthorse1"
@@ -185,6 +200,19 @@ check "the new password works" "$([ "$LOGIN" = "302" ] && echo 1 || echo 0)"
 OLD=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3111/login \
   --data-urlencode "email=owner@example.com" --data-urlencode "password=correcthorse1")
 check "the old password stops working" "$([ "$OLD" = "401" ] && echo 1 || echo 0)"
+# A seller refreshing their own certificate is not a buyer looking at it.
+curl -s -c "$SCRATCH/owner" -o /dev/null -X POST http://localhost:3111/login \
+  --data-urlencode "email=owner@example.com" --data-urlencode "password=brandnewpass9"
+curl -s -b "$SCRATCH/owner" -o /dev/null -X POST "http://localhost:3111/r/$FAIL_ID/claim"
+BEFORE=$(kit views "$FAIL_ID" page)
+curl -s -b "$SCRATCH/owner" -o /dev/null -A "$BROWSER" "http://localhost:3111/r/$FAIL_ID"
+check "the owner's own visits are not counted" "$([ "$(kit views "$FAIL_ID" page)" = "$BEFORE" ] && echo 1 || echo 0)"
+# But a stranger's visit to that same certificate still is.
+curl -s -o /dev/null -A "$BROWSER" "http://localhost:3111/r/$FAIL_ID"
+check "a stranger's visit to the same certificate is counted" "$([ "$(kit views "$FAIL_ID" page)" = "$((BEFORE+1))" ] && echo 1 || echo 0)"
+check "the dashboard reports the traffic" \
+  "$(has "$(curl -s -b "$SCRATCH/owner" http://localhost:3111/dashboard)" "certificate opens")"
+
 check "a spent reset link cannot be reused" \
   "$(has "$(curl -s -X POST http://localhost:3111/reset-password --data-urlencode "token=$RTOK" --data-urlencode "password=another12345")" "expired or was already used")"
 

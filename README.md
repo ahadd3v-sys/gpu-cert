@@ -100,6 +100,22 @@ approaches.
 This raises forgery from one request to a sustained 16-minute impersonation. It
 does not make it impossible, and nothing client-side can.
 
+## Measurement
+
+A certificate nobody opens is worth nothing at any price, so the dashboard
+tracks two numbers per certificate: badge impressions (the listing was on
+someone's screen) and certificate opens (they clicked through to read it).
+Impressions against clickthroughs is the question of whether the product
+works, and it is the number that decides what, if anything, is worth charging
+for.
+
+No cookies and no third-party script. The viewer hash is salted and rotates
+daily, so it distinguishes people within a day and cannot follow anyone across
+days. Only the referring host is kept, never the full URL, since a Referer can
+carry a search query or a private listing path. The owner's own visits are
+excluded, as are crawlers and the link unfurls Discord, Slack and Reddit send,
+because counting those would flatter the one number that has to stay honest.
+
 ## Verification
 
 The differentiator is that a buyer can check a certificate without trusting
@@ -126,6 +142,22 @@ detected.
 The page is also explicit about what a valid signature does *not* prove: that
 the person showing it owns the card. That is what the hardware fingerprint on
 the certificate is for.
+
+## Measurement
+
+A certificate nobody opens is worth nothing at any price, so the dashboard
+tracks two numbers per certificate: badge impressions (the listing was on
+someone's screen) and certificate opens (they clicked through to read it).
+Impressions against clickthroughs is the question of whether the product
+works, and it is the number that decides what, if anything, is worth charging
+for.
+
+No cookies and no third-party script. The viewer hash is salted and rotates
+daily, so it distinguishes people within a day and cannot follow anyone across
+days. Only the referring host is kept, never the full URL, since a Referer can
+carry a search query or a private listing path. The owner's own visits are
+excluded, as are crawlers and the link unfurls Discord, Slack and Reddit send,
+because counting those would flatter the one number that has to stay honest.
 
 ## Verification protocol
 

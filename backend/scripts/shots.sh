@@ -81,6 +81,14 @@ curl -s -c "$JAR" -b "$JAR" -X POST http://localhost:3112/signup \
   --data-urlencode "email=shots@example.com" --data-urlencode "password=screenshots123" -o /dev/null
 curl -s -b "$JAR" -X POST "http://localhost:3112/r/$PASS_ID/claim" -o /dev/null
 curl -s -b "$JAR" -X POST "http://localhost:3112/r/$FAIL_ID/claim" -o /dev/null
+# A little traffic, so the "who is looking" panel renders with real numbers
+# instead of its empty state.
+BROWSER="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+for i in $(seq 1 9);  do curl -s -o /dev/null -A "$BROWSER$i" -e "https://www.reddit.com/r/hardwareswap/x" "http://localhost:3112/r/$PASS_ID"; done
+for i in $(seq 1 4);  do curl -s -o /dev/null -A "$BROWSER$i" -e "https://www.ebay.com/itm/123"            "http://localhost:3112/r/$PASS_ID"; done
+for i in $(seq 1 3);  do curl -s -o /dev/null -A "$BROWSER$i" "http://localhost:3112/r/$FAIL_ID"; done
+for i in $(seq 1 26); do curl -s -o /dev/null -A "$BROWSER$i" "http://localhost:3112/r/$PASS_ID/badge"; done
+
 curl -s -b "$JAR" http://localhost:3112/dashboard -o "$SCRATCH/dashboard.html"
 
 shot "cert-pass"  "http://localhost:3112/r/$PASS_ID"

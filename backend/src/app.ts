@@ -20,6 +20,10 @@ import {
   countRecentSessions,
   createFeedback,
   countRecentFeedback,
+  recordReportView,
+  getViewStats,
+  getReferrerBreakdown,
+  type ViewKind,
   createEmailToken,
   consumeEmailToken,
   markEmailVerified,
@@ -272,16 +276,78 @@ app.post("/api/certify", async (c) => {
   });
 });
 
+// Link unfurls from Discord, Slack and Reddit hit these URLs too, and search
+// crawlers hit them constantly. Counting those as "a buyer looked at the
+// certificate" would make the one number this exists to measure meaningless.
+const BOT_UA = /bot|crawl|spider|slurp|preview|fetch|curl|wget|headless|monitor|scrape|facebookexternalhit|embedly|discord|slack|telegram|whatsapp|twitter/i;
+
+function isProbablyBot(c: Context): boolean {
+  const ua = c.req.header("user-agent") ?? "";
+  return ua === "" || BOT_UA.test(ua);
+}
+
+/// Just the host, never the full URL. A Referer can carry a search query or a
+/// private listing path, none of which is needed to answer "did this come
+/// from Reddit".
+function referrerHost(c: Context): string | null {
+  const raw = c.req.header("referer") ?? c.req.header("referrer");
+  if (!raw) return null;
+  try {
+    const host = new URL(raw).hostname.replace(/^www\./, "");
+    // Self-referrals are navigation inside the site, not an arrival.
+    if (host && !BASE_URL.includes(host)) return host;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/// Salted, and rotated daily by folding the date in. Enough to count distinct
+/// people within a day, useless for following anyone across days.
+function viewerHash(c: Context): string {
+  const day = new Date().toISOString().slice(0, 10);
+  const ua = c.req.header("user-agent") ?? "";
+  return createHash("sha256")
+    .update(`${process.env.AUTH_SECRET ?? ""}:${hashIp(c)}:${ua}:${day}`)
+    .digest("hex");
+}
+
+/// Never allowed to break or slow the thing it is measuring. A certificate
+/// that fails to load because analytics threw would be a strictly worse
+/// product than one with no analytics.
+async function trackView(c: Context, reportId: string, kind: ViewKind, ownerId: string | null) {
+  try {
+    if (isProbablyBot(c)) return;
+    // The seller refreshing their own certificate is not a buyer looking at
+    // it, and counting it would flatter the number that has to stay honest.
+    const viewerId = await getSessionUserId(c);
+    if (ownerId && viewerId === ownerId) return;
+    await recordReportView({
+      reportId,
+      kind,
+      referrerHost: referrerHost(c),
+      viewerHash: viewerHash(c),
+    });
+  } catch (err) {
+    console.error("view tracking failed", err);
+  }
+}
+
 app.get("/r/:reportId", async (c) => {
   const report = await getReportById(c.req.param("reportId"));
   if (!report) return c.notFound();
   const viewerUserId = await getSessionUserId(c);
+  await trackView(c, report.id, "page", report.user_id);
   return c.html(renderReportPage(report, viewerUserId !== null));
 });
 
 app.get("/r/:reportId/badge", async (c) => {
   const report = await getReportById(c.req.param("reportId"));
   if (!report) return c.notFound();
+  // Counted even for unfurl bots would be wrong, but a badge embedded in a
+  // listing is fetched by the *viewer's* browser, so this is a real
+  // impression: the listing was on someone's screen.
+  await trackView(c, report.id, "badge", report.user_id);
   return renderBadge(report);
 });
 
@@ -595,8 +661,12 @@ app.get("/dashboard", async (c) => {
   }
 
   const [reports, uploadKey] = await Promise.all([getReportsForUser(userId), ensureUploadKey(user)]);
+  const [viewStats, referrers] = await Promise.all([
+    getViewStats(reports.map((r) => r.id)),
+    getReferrerBreakdown(userId),
+  ]);
   return c.html(
-    renderDashboard(reports, user.email, uploadKey, {
+    renderDashboard(reports, user.email, uploadKey, viewStats, referrers, {
       emailVerified: user.email_verified === 1,
       verificationSent: c.req.query("sent") === "1",
       canResend: isEmailConfigured(),

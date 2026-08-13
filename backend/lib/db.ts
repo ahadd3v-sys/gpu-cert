@@ -105,11 +105,30 @@ CREATE TABLE IF NOT EXISTS feedback (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One row per view of a certificate or its badge image. The point of
+-- separating the two: a badge is embedded in a listing, so a badge request
+-- means the listing was seen, while a page view means someone actually
+-- clicked through to read the certificate. Impressions versus clickthroughs
+-- is the whole question of whether this product works.
+--
+-- No cookies and no third-party script. The viewer hash is salted and rotates
+-- daily, so it can count distinct people within a day and cannot follow
+-- anyone across days.
+CREATE TABLE IF NOT EXISTS report_views (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  referrer_host TEXT,
+  viewer_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_reports_fingerprint_hash ON reports (fingerprint_hash);
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports (user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_ip ON test_sessions (ip_hash, started_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback (created_at);
 CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens (user_id, kind);
+CREATE INDEX IF NOT EXISTS idx_report_views_report ON report_views (report_id, created_at);
 
 -- Enforces upload_key uniqueness on DBs where the column arrived via ALTER
 -- (SQLite can't add a UNIQUE column in place). A unique index permits
@@ -519,4 +538,86 @@ export async function setPassword(userId: string, passwordHash: string): Promise
     sql: `UPDATE users SET password_hash = ? WHERE id = ?`,
     args: [passwordHash, userId],
   });
+}
+
+// -------------------------------------------------------- view tracking
+
+export type ViewKind = "page" | "badge";
+
+export interface ViewStats {
+  pageViews: number;
+  badgeViews: number;
+  uniqueViewers: number;
+  lastViewedAt: string | null;
+}
+
+export async function recordReportView(opts: {
+  reportId: string;
+  kind: ViewKind;
+  referrerHost: string | null;
+  viewerHash: string;
+}): Promise<void> {
+  await ensureSchema();
+  await db().execute({
+    sql: `INSERT INTO report_views (id, report_id, kind, referrer_host, viewer_hash)
+          VALUES (?, ?, ?, ?, ?)`,
+    args: [crypto.randomUUID(), opts.reportId, opts.kind, opts.referrerHost, opts.viewerHash],
+  });
+}
+
+/// Stats for a set of reports in one query rather than one per row, since the
+/// dashboard renders a whole register at once.
+export async function getViewStats(reportIds: string[]): Promise<Map<string, ViewStats>> {
+  const out = new Map<string, ViewStats>();
+  if (reportIds.length === 0) return out;
+  await ensureSchema();
+
+  const placeholders = reportIds.map(() => "?").join(",");
+  const res = await db().execute({
+    sql: `SELECT report_id,
+                 SUM(CASE WHEN kind = 'page' THEN 1 ELSE 0 END) AS page_views,
+                 SUM(CASE WHEN kind = 'badge' THEN 1 ELSE 0 END) AS badge_views,
+                 COUNT(DISTINCT viewer_hash) AS unique_viewers,
+                 MAX(created_at) AS last_viewed_at
+          FROM report_views WHERE report_id IN (${placeholders})
+          GROUP BY report_id`,
+    args: reportIds,
+  });
+
+  for (const row of res.rows as unknown as Array<{
+    report_id: string;
+    page_views: number;
+    badge_views: number;
+    unique_viewers: number;
+    last_viewed_at: string | null;
+  }>) {
+    out.set(row.report_id, {
+      pageViews: Number(row.page_views),
+      badgeViews: Number(row.badge_views),
+      uniqueViewers: Number(row.unique_viewers),
+      lastViewedAt: row.last_viewed_at,
+    });
+  }
+  return out;
+}
+
+/// Where a user's certificate traffic came from. This is the number that says
+/// whether buyers are actually following these links out of listings.
+export async function getReferrerBreakdown(
+  userId: string,
+  limit = 8
+): Promise<Array<{ host: string; views: number }>> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT COALESCE(v.referrer_host, 'direct') AS host, COUNT(*) AS views
+          FROM report_views v
+          JOIN reports r ON r.id = v.report_id
+          WHERE r.user_id = ? AND v.kind = 'page'
+          GROUP BY host ORDER BY views DESC LIMIT ?`,
+    args: [userId, limit],
+  });
+  return (res.rows as unknown as Array<{ host: string; views: number }>).map((r) => ({
+    host: r.host,
+    views: Number(r.views),
+  }));
 }

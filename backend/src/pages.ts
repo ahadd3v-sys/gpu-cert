@@ -8,13 +8,17 @@
 // account only buys you a place where your certificates are collected.
 import { esc } from "./html.js";
 import { sitePage } from "./theme.js";
-import type { ReportRow } from "../lib/db.js";
+import type { ReportRow, ViewStats } from "../lib/db.js";
 
 const REPO_URL = "https://github.com/ahadd3v-sys/gpu-cert";
 const DOWNLOAD_URL = `${REPO_URL}/releases/latest/download/gpu-cert.exe`;
 
 function certificateNumber(id: string): string {
   return `GPUC-${id.slice(0, 8).toUpperCase()}`;
+}
+
+function formatCount(n: number): string {
+  return n.toLocaleString("en-US");
 }
 
 function formatDate(iso: string): string {
@@ -364,6 +368,8 @@ export function renderDashboard(
   reports: ReportRow[],
   email: string,
   uploadKey: string,
+  viewStats: Map<string, ViewStats>,
+  referrers: Array<{ host: string; views: number }>,
   emailState: DashboardEmailState
 ): string {
   const register = reports.length
@@ -373,6 +379,7 @@ export function renderDashboard(
              <th class="hide-sm">Certificate</th>
              <th>Card</th>
              <th class="hide-sm">Result</th>
+             <th class="num">Views</th>
              <th class="num">Issued</th>
            </tr>
          </thead>
@@ -388,6 +395,7 @@ export function renderDashboard(
                  <span class="verdict ${passed ? "verdict-pass" : "verdict-fail"}">${esc(r.verdict)}</span>
                </div></td>
              <td class="hide-sm"><span class="verdict ${passed ? "verdict-pass" : "verdict-fail"}">${esc(r.verdict)}</span></td>
+             <td class="num views" title="${viewStats.get(r.id)?.badgeViews ?? 0} badge impression(s) in listings">${viewStats.get(r.id)?.pageViews ?? 0}</td>
              <td class="num issued">${formatDate(r.created_at)}</td>
            </tr>`;
              })
@@ -415,10 +423,53 @@ export function renderDashboard(
            </div>`
         : "";
 
+  // The number that decides whether any of this is worth charging for. A
+  // certificate nobody opens is worth nothing at any price, so this is shown
+  // plainly rather than buried, including when it is zero.
+  const totalPageViews = [...viewStats.values()].reduce((n, v) => n + v.pageViews, 0);
+  const totalBadgeViews = [...viewStats.values()].reduce((n, v) => n + v.badgeViews, 0);
+  const traffic = reports.length
+    ? `<section>
+         <p class="section-label">Who is looking</p>
+         <div class="traffic">
+           <div class="traffic-figures">
+             <div class="figure"><span class="figure-n">${formatCount(totalPageViews)}</span><span class="figure-label">certificate opens</span></div>
+             <div class="figure"><span class="figure-n">${formatCount(totalBadgeViews)}</span><span class="figure-label">badge impressions</span></div>
+           </div>
+           ${
+             referrers.length
+               ? `<dl class="referrers">${referrers
+                   .map(
+                     (r) =>
+                       `<div><dt>${r.host === "direct" ? "Opened directly" : esc(r.host)}</dt><dd>${formatCount(r.views)}</dd></div>`
+                   )
+                   .join("")}</dl>`
+               : `<p class="footer-note" style="margin:0">Nobody has opened one yet. Put the link in a listing and this fills in.</p>`
+           }
+         </div>
+         <p class="footer-note" style="margin-top:14px">Your own visits are not counted, and neither are link previews or crawlers. Some sites strip the referrer, so those arrive as "opened directly".</p>
+       </section>
+
+       <hr class="rule">`
+    : "";
+
   return sitePage({
     title: "My certificates",
     nav: loggedInNav(),
     css: `${DASHBOARD_CSS}
+      .traffic { display: grid; gap: 24px; align-items: start; }
+      @media (min-width: 780px) { .traffic { grid-template-columns: 260px minmax(0, 1fr); gap: 48px; } }
+      .traffic-figures { display: flex; gap: 32px; }
+      .figure { display: flex; flex-direction: column; }
+      .figure-n { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 30px; line-height: 1.1; }
+      .figure-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-muted); margin-top: 2px; }
+      dl.referrers { display: grid; grid-template-columns: 1fr auto; margin: 0; font-size: 13.5px; }
+      .referrers > div { display: contents; }
+      .referrers dt, .referrers dd { margin: 0; padding: 7px 0; border-top: 1px solid var(--paper-deep); }
+      .referrers dt { color: var(--ink-muted); }
+      .referrers dd { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      .referrers > div:first-child dt, .referrers > div:first-child dd { border-top: none; }
+      td.views { color: var(--ink-muted); }
       .notice-info {
         display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
         border-left: 3px solid var(--mark); background: rgba(20, 18, 15, 0.05);
@@ -441,6 +492,8 @@ export function renderDashboard(
     ${register}
 
     <hr class="rule">
+
+    ${traffic}
 
     <section>
       <p class="section-label">Connect the app to this account</p>
