@@ -433,6 +433,10 @@ export interface TestSessionRow {
   started_at: string;
   progress_count: number;
   consumed_at: string | null;
+  /// The version that opened the session, which is what the version floor was
+  /// checked against. Carried through so a submission can be judged by the
+  /// rules in force when the run started rather than when it ended.
+  client_version: string;
 }
 
 export async function createTestSession(opts: {
@@ -461,7 +465,7 @@ export async function createTestSession(opts: {
 export async function getTestSession(id: string, nonce: string): Promise<TestSessionRow | null> {
   await ensureSchema();
   const res = await db().execute({
-    sql: `SELECT id, nonce, fingerprint_hash, started_at, progress_count, consumed_at
+    sql: `SELECT id, nonce, fingerprint_hash, started_at, progress_count, consumed_at, client_version
           FROM test_sessions WHERE id = ? AND nonce = ?`,
     args: [id, nonce],
   });

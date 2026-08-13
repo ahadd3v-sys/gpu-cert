@@ -266,10 +266,18 @@ app.post("/api/certify", async (c) => {
 
   await ensureSchema();
 
-  // Two gates that used to be one. The version floor is the real rule; the
-  // attestation check stays because a current-version client that somehow
-  // omits it still cannot be trusted to have run the test it is claiming.
-  if (!isSupportedClient(req.client_version) || !req.attestation) {
+  // The floor is enforced at session start, not here.
+  //
+  // Enforcing it again at submission means raising the floor kills every run
+  // already in flight. That is not hypothetical: a full sixteen minute run on
+  // an RX 6600 passed all three tests and was refused at the last step because
+  // the floor moved while it was running. A session can only exist if the
+  // client was supported when it opened, so finishing one is always allowed,
+  // and checkSubmission ties the report to the version that opened it.
+  //
+  // The attestation check stays, because a report with no session has no such
+  // proof and is the thing this whole module exists to refuse.
+  if (!req.attestation) {
     return c.json({ error: UPGRADE_MESSAGE, minimum_client_version: MIN_CLIENT_VERSION }, 426);
   }
 

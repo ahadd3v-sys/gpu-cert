@@ -64,7 +64,15 @@ export interface SessionRecord {
   started_at: string;
   progress_count: number;
   consumed_at: string | null;
+  client_version: string;
 }
+
+/// How long a session stays fileable. Generous, because a run whose upload
+/// failed is saved to disk and filed later with --resubmit, and someone
+/// offline overnight should not lose sixteen minutes of testing. Bounded at
+/// all because an unconsumed session is a standing permission to file, and a
+/// permission with no expiry is one an old client can sit on indefinitely.
+const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000;
 
 export interface AttestationResult {
   ok: boolean;
@@ -246,6 +254,18 @@ export function checkSubmission(
     problems.push("report fingerprint does not match the card this session was opened for");
   }
 
+  // Judged by the version that opened the session, not the one submitting.
+  // Anything else means raising the version floor kills every run already in
+  // flight, which is exactly what happened to a full sixteen minute run on an
+  // RX 6600: it passed every test and was refused at the last step because the
+  // floor moved while it was running. A session can only exist if the client
+  // was supported when it started, so finishing one is always allowed.
+  if (req.client_version !== session.client_version) {
+    problems.push(
+      `report claims version ${req.client_version} but the session was opened by ${session.client_version}`
+    );
+  }
+
   const claimedMs = claimedTotalDurationMs(req);
   const wallClockMs = Date.parse(nowIso) - Date.parse(session.started_at);
   if (!Number.isFinite(wallClockMs) || wallClockMs < 0) {
@@ -256,6 +276,10 @@ export function checkSubmission(
     problems.push(
       `claims ${Math.round(claimedMs / 1000)}s of testing but the session was only open ${Math.round(wallClockMs / 1000)}s`
     );
+  }
+
+  if (Number.isFinite(wallClockMs) && wallClockMs > MAX_SESSION_AGE_MS) {
+    problems.push("this test session is too old to file");
   }
 
   const minHeartbeats = expectedMinimumHeartbeats(claimedMs);

@@ -223,13 +223,26 @@ CURSTART=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3111/
   -d '{"client_version":"'$CURRENT'","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'"}')
 check "a current client can open a session" "$([ "$CURSTART" = "200" ] && echo 1 || echo 0)"
 
-# The floor is enforced again at submission, so a client that opened a session
-# under one version cannot file under an unsupported one.
+# The floor is NOT re-checked at submission. Raising it while a run is in
+# flight would otherwise refuse a finished sixteen minute test at the last
+# step, which is exactly what happened to a real RX 6600 run. What is checked
+# is that the report speaks for the same version that opened the session, so
+# the relaxation cannot be used to launder an old client's report.
 read -r OSID ONONCE <<<"$(curl -s -X POST http://localhost:3111/api/session/start -H 'content-type: application/json' \
   -d '{"client_version":"'$CURRENT'","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'"}' \
   | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.session_id+' '+j.nonce)})")"
-check "an outdated client cannot file a certificate" \
-  "$([ "$(post_report "$(report "$OSID" "$ONONCE" | sed "s/\"client_version\":\"$CURRENT\"/\"client_version\":\"$OUTDATED\"/")")" = "426" ] && echo 1 || echo 0)"
+kit backdate "$OSID" 1000 9 >/dev/null
+check "a report cannot claim a version the session did not open with" \
+  "$([ "$(post_report "$(report "$OSID" "$ONONCE" | sed "s/\"client_version\":\"$CURRENT\"/\"client_version\":\"$OUTDATED\"/")")" = "403" ] && echo 1 || echo 0)"
+
+# The run that motivated all of this: session opened, tests done, and the
+# submission must still be accepted.
+read -r ISID INONCE <<<"$(curl -s -X POST http://localhost:3111/api/session/start -H 'content-type: application/json' \
+  -d '{"client_version":"'$CURRENT'","device_name":"AMD Radeon RX 6600","fingerprint_hash":"'$FP'"}' \
+  | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.session_id+' '+j.nonce)})")"
+kit backdate "$ISID" 1000 9 >/dev/null
+check "a run already in flight can still file after the floor moves" \
+  "$([ "$(post_report "$(report "$ISID" "$INONCE")")" = "200" ] && echo 1 || echo 0)"
 
 echo ""
 echo "run diagnostics:"

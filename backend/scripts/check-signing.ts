@@ -214,7 +214,7 @@ const freshSession = {
   fingerprint_hash: honest.fingerprint.hash,
   started_at: openedNow.toISOString(),
   progress_count: 0,
-  consumed_at: null,
+  consumed_at: null, client_version: honest.client_version,
 };
 check(
   "a session opened seconds ago cannot claim 16 minutes of testing",
@@ -226,6 +226,14 @@ const agedSession = {
   started_at: new Date(openedNow.getTime() - 1_000_000).toISOString(),
   progress_count: 9,
 };
+// A run whose session was opened by a different build than the one submitting.
+// This is what stops the relaxed floor rule from becoming a way to launder an
+// old client's report through a new session.
+check(
+  "a report cannot claim a different version than the session that opened it",
+  !checkSubmission(honest, { ...agedSession, client_version: "0.0.1" }, openedNow.toISOString()).ok
+);
+
 check(
   "the same report is accepted once the session has actually been open that long",
   checkSubmission(honest, agedSession, openedNow.toISOString()).ok,
