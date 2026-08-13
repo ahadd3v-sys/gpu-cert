@@ -1,0 +1,14 @@
+# The Rust build directory is 5.9 GB and the Vercel CLI was trying to upload
+# it, which made `vercel --prod` hang for fifteen minutes with no output before
+# being killed. .gitignore alone did not spare it.
+#
+# None of the client is needed to build the site. The backend is a Hono app and
+# the released exe is published through GitHub, not through here.
+client/
+
+# Local database used by `npm run dev` and the smoke suite.
+backend/local.db
+backend/local.db-*
+
+node_modules/
+.git/

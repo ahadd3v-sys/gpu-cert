@@ -13,3 +13,4 @@ resend api.txt
 # Internal working notes, shared between whoever is on this locally.
 # Kept out of the public repo but kept on disk.
 NOTES.md
+.vercel
