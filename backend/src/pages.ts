@@ -76,32 +76,77 @@ function loggedOutNav(next?: string): string {
 
 const HOME_CSS = `
   /* Sits directly under the hero: the freshest evidence the service is real,
-     and the thing a visitor should meet before any explanation of it. */
-  .certified { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--paper-deep); }
-  .certified-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .certified-all { font-size: 12px; color: var(--ink-muted); }
-  .certified-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; margin-top: 12px; }
-  /* A tile, not a photograph. See renderHome for why there are no images. */
-  .certified-card { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start;
-                    padding: 12px 14px; border: 1px solid var(--paper-deep);
-                    text-decoration: none; color: var(--ink); background: var(--paper); }
-  /* Spans both rows of the tile so the text column sits beside it. */
-  .die-mark, .card-photo { grid-row: 1 / span 3; width: 40px; height: 40px; }
-  .die-mark { color: var(--ink-muted); }
-  .card-photo { object-fit: contain; }
-  .certified-card:hover .die-mark { color: var(--mark); }
-  .certified-card:hover { border-color: var(--ink-muted); }
-  .certified-card > .certified-top,
-  .certified-card > .certified-name,
-  .certified-card > .certified-meta { grid-column: 2; }
-  .certified-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-  .certified-verdict { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
-  .certified-verdict.is-pass { color: var(--pass); }
-  .certified-verdict.is-fail { color: var(--fail); }
-  .certified-when { font-size: 11px; color: var(--ink-muted); }
-  .certified-name { display: block; margin-top: 4px; font-family: "Space Grotesk", sans-serif;
-                    font-weight: 600; font-size: 14px; line-height: 1.3; }
-  .certified-meta { display: block; margin-top: 3px; font-size: 11.5px; color: var(--ink-muted); }
+     and the thing a visitor should meet before any explanation of it.
+
+     No panel, no borders, no shadow. It is already inside .sheet, and a
+     bordered box inside a bordered paper panel was most of what made the
+     previous version read as generic. Hairlines and alignment carry it, the
+     same way they carry the certificate. */
+  .register { margin-top: 30px; }
+  .register-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+  .register-head .section-label { margin: 0; }
+  .register-link { font-size: 11.5px; color: var(--ink-muted); text-decoration: none; border-bottom: 1px solid var(--paper-deep); }
+  .register-link:hover { color: var(--mark); border-bottom-color: var(--mark); }
+  .register-rows { list-style: none; margin: 0; padding: 0; }
+
+  /* Seal, number, card, coverage, verdict, age. The card name takes the free
+     space because it is what anyone actually scans for. */
+  .register-row {
+    display: grid;
+    grid-template-columns: 34px auto minmax(0, auto) minmax(24px, 1fr) auto auto auto;
+    align-items: center;
+    column-gap: 16px;
+    padding: 11px 4px;
+    border-top: 1px solid var(--paper-deep);
+    text-decoration: none;
+    color: var(--ink);
+  }
+  .register-rows li:first-child .register-row { border-top: none; }
+  .register-row:hover { background: var(--tint-mark); }
+
+  .register-seal { display: flex; width: 34px; height: 34px; color: var(--ink-muted); }
+  .register-seal .die-mark, .register-seal img { width: 34px; height: 34px; }
+  .register-seal img { object-fit: contain; }
+  .register-row:hover .register-seal { color: var(--mark); }
+
+  /* Tabular figures throughout the data columns, so numbers line up down the
+     register the way they do down the certificate's spec table. */
+  .register-no, .register-cov, .register-when {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .register-no { font-size: 11.5px; color: var(--ink-muted); letter-spacing: 0.01em; }
+  .register-card { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 14.5px;
+                   line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A leader, the way a ledger or an index carries the eye from a name to its
+     figures. At full width the row would otherwise be a name on the left and a
+     cluster of numbers 400px away with nothing between them. */
+  .register-leader { align-self: center; height: 1px; border-bottom: 1px dotted var(--paper-deep); }
+  .register-cov { font-size: 13px; text-align: right; }
+  .register-unit { font-family: "Inter", sans-serif; font-size: 11px; color: var(--ink-muted); margin-left: 2px; }
+  .register-verdict { font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+                      min-width: 4ch; text-align: right; }
+  .register-verdict.is-pass { color: var(--pass); }
+  .register-verdict.is-fail { color: var(--fail); }
+  .register-when { font-size: 11.5px; color: var(--ink-muted); text-align: right; min-width: 11ch; }
+
+  @media (max-width: 720px) {
+    /* Two lines: identity above, result below, seal spanning both. The columns
+       collapse rather than the text shrinking, so nothing becomes unreadable. */
+    .register-row {
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      row-gap: 3px;
+      column-gap: 12px;
+      padding: 12px 2px;
+    }
+    .register-seal { grid-row: 1 / span 2; }
+    .register-leader { display: none; }
+    .register-card { grid-column: 2; grid-row: 1; }
+    .register-verdict { grid-column: 3; grid-row: 1; }
+    .register-no { grid-column: 2; grid-row: 2; }
+    .register-cov { grid-column: 3; grid-row: 2; text-align: right; }
+    .register-when { display: none; }
+  }
 
   .hero { padding: 6px 0 4px; }
   .hero-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
@@ -202,15 +247,30 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
   // The model name set in the certificate's own type does not have any of those
   // problems and works for every card ever released, including ones that do not
   // exist yet.
+  // A register, not a card grid.
+  //
+  // The dashboard's own note says why: "a ledger table keyed by certificate
+  // number, not a card grid, because a certificate number is how you refer to
+  // one of these documents." This section was built as a card grid anyway, and
+  // the tiles were bordered boxes sitting inside .sheet, which is itself a
+  // bordered paper panel. Boxes inside a box, which is most of why it read
+  // badly.
+  //
+  // As rows it inherits the certificate's own vocabulary: hairlines, tabular
+  // figures, a certificate number, and the die mark reading as a seal pressed
+  // onto a filed document rather than an avatar on a card. It also degrades
+  // properly at this volume: four rows look like a register recently opened,
+  // where four tiles in a twelve-tile grid look like a grid missing eight.
   const certifiedSection =
     certified.length === 0
       ? ""
-      : `<section class="certified">
-          <div class="certified-head">
+      : `<section class="register">
+          <div class="register-head">
             <h2 class="section-label">Recently tested</h2>
-            <a class="certified-all" href="/verify">Check a certificate</a>
+            <a class="register-link" href="/verify">Check a certificate</a>
           </div>
-          <div class="certified-grid">
+          <hr class="rule-double">
+          <ol class="register-rows">
             ${certified
               .map((r) => {
                 const passed = r.verdict === "Pass";
@@ -219,24 +279,24 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
                     ? Math.round((r.vram_bytes_tested / r.fingerprint_vram_total_bytes) * 100)
                     : 0;
                 const photo = cardImage(r.device_name);
-                return `<a class="certified-card" href="/r/${esc(r.id)}">
-                  ${
-                    photo
-                      ? `<img class="card-photo" src="${esc(photo)}" alt="" loading="lazy" width="40" height="40">`
-                      : renderDieMark(r.fingerprint_hash)
-                  }
-                  <span class="certified-top">
-                    <span class="certified-verdict ${passed ? "is-pass" : "is-fail"}">${passed ? "Passed" : "Failed"}</span>
-                    <span class="certified-when">${esc(timeAgo(r.created_at))}</span>
-                  </span>
-                  <span class="certified-name">${esc(r.device_name)}</span>
-                  <span class="certified-meta">${coverage}% of memory tested${
-                    r.vram_total_errors > 0 ? `, ${r.vram_total_errors} errors` : ", no errors"
-                  }</span>
-                </a>`;
+                return `<li>
+                  <a class="register-row" href="/r/${esc(r.id)}">
+                    <span class="register-seal">${
+                      photo
+                        ? `<img src="${esc(photo)}" alt="" loading="lazy" width="34" height="34">`
+                        : renderDieMark(r.fingerprint_hash)
+                    }</span>
+                    <span class="register-no">${esc(certificateNumber(r.id))}</span>
+                    <span class="register-card">${esc(r.device_name)}</span>
+                    <span class="register-leader" aria-hidden="true"></span>
+                    <span class="register-cov">${coverage}<span class="register-unit">% tested</span></span>
+                    <span class="register-verdict ${passed ? "is-pass" : "is-fail"}">${passed ? "Pass" : "Fail"}</span>
+                    <span class="register-when">${esc(timeAgo(r.created_at))}</span>
+                  </a>
+                </li>`;
               })
               .join("")}
-          </div>
+          </ol>
         </section>`;
 
   return sitePage({

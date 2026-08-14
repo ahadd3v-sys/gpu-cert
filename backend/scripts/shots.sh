@@ -35,8 +35,12 @@ setsid npx tsx src/dev.ts > "$SCRATCH/server.log" 2>&1 &
 SERVER=$!
 for _ in $(seq 1 40); do curl -sf "http://localhost:3112/" -o /dev/null && break; sleep 0.5; done
 
-PASS=$(cat <<'JSON'
-{"client_version":"0.3.1","device_name":"AMD Radeon RX 6600","pcie_link_width_current":8,"pcie_link_width_max":8,
+# Read from the backend's own constant, so raising the version floor does not
+# silently turn every screenshot fixture into a rejected submission. It did.
+CURRENT=$(node -e 'const s=require("fs").readFileSync("lib/client-version.ts","utf8");process.stdout.write(s.match(/MIN_CLIENT_VERSION = "([^"]+)"/)[1])')
+
+PASS=$(cat <<JSON
+{"client_version":"$CURRENT","device_name":"AMD Radeon RX 6600","pcie_link_width_current":8,"pcie_link_width_max":8,
 "fingerprint":{"uuid":"PCI_VEN_1002&DEV_73FF&SUBSYS_50221462&REV_C7","pci_device_id":29695,"vram_total_bytes":8573157376,"vbios_version":"113-EXT47001-002","hash":"9f2c41ab7d3e5580c6a1fe94b20d7738aa4c15e6039bd82f7ce4a1069d35bb47"},
 "stress_test":{"dispatch_count":513,"duration_ms":300000,"telemetry_series":[{"elapsed_ms":30000,"temperature_c":54,"power_draw_mw":98000,"graphics_clock_mhz":2044,"memory_clock_mhz":1750,"utilization_pct":99},{"elapsed_ms":150000,"temperature_c":57,"power_draw_mw":101000,"graphics_clock_mhz":2038,"memory_clock_mhz":1750,"utilization_pct":100},{"elapsed_ms":290000,"temperature_c":58,"power_draw_mw":100000,"graphics_clock_mhz":2035,"memory_clock_mhz":1750,"utilization_pct":99}],"aborted_for_safety":false},
 "vram_test":{"passes_run":12563,"total_errors":0,"bytes_tested":7287183768,"duration_ms":600072,"aborted_for_safety":false},
@@ -44,6 +48,9 @@ PASS=$(cat <<'JSON'
 JSON
 )
 FAIL=$(sed -e 's/"total_errors":0/"total_errors":48213/' -e 's/"mismatches":0/"mismatches":9044/' -e 's/"pcie_link_width_current":8/"pcie_link_width_current":4/' -e 's/"pcie_link_width_max":8/"pcie_link_width_max":16/' <<<"$PASS")
+# A different card, so the home page register renders as a register rather than
+# as a single row. It shows one entry per model.
+SECOND=$(sed -e 's/AMD Radeon RX 6600/NVIDIA GeForce RTX 3070/' -e 's/9f2c41ab7d3e5580c6a1fe94b20d7738aa4c15e6039bd82f7ce4a1069d35bb47/3ab77c19e0d452186fb3ac9d5e2740881c6b5fa93de207c4b18e6d5309fa2b71/' -e 's/PCI_VEN_1002&DEV_73FF&SUBSYS_50221462&REV_C7/GPU-1a24e723-0fa2-a6fa-b431-a121f67d0a8a/' <<<"$PASS")
 
 # Reports now have to be attested to a real test session, so seeding one means
 # opening a session and moving its start time back the way the smoke test does.
@@ -52,7 +59,11 @@ FAIL=$(sed -e 's/"total_errors":0/"total_errors":48213/' -e 's/"mismatches":0/"m
 FP=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).fingerprint.hash)" "$PASS")
 
 post() {
-  read -r sid nonce <<<"$(npx tsx scripts/testkit.ts start "$FP")"
+  # A session is bound to the card's fingerprint, so it must be opened with the
+  # fingerprint of the payload being filed rather than a fixed one.
+  local fp
+  fp=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).fingerprint.hash)" "$1")
+  read -r sid nonce <<<"$(npx tsx scripts/testkit.ts start "$fp")"
   npx tsx scripts/testkit.ts backdate "$sid" 1000 9 >/dev/null
   local body
   body=$(node -e '
@@ -66,6 +77,7 @@ post() {
 
 PASS_ID=$(post "$PASS")
 FAIL_ID=$(post "$FAIL")
+post "$SECOND" >/dev/null
 
 shot() {
   google-chrome --headless --disable-gpu --hide-scrollbars --no-sandbox \

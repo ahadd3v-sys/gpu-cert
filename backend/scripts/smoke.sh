@@ -186,14 +186,20 @@ check "the certificate says nothing about beta" "$(curl -s "http://localhost:311
 # three times and reads as "almost nobody uses this", on the front page.
 HOMEPAGE=$(curl -s http://localhost:3111/)
 check "the home page shows recently tested cards" "$(has "$HOMEPAGE" "Recently tested")"
+# A register keyed by certificate number, which is the dashboard's own stated
+# principle: that is how you refer to one of these documents.
+check "each entry carries its certificate number" "$(has "$HOMEPAGE" "GPUC-")"
+# Bordered tiles inside .sheet were a box in a box. Hairlines only.
+check "the entries are rows, not boxed cards" \
+  "$(grep -q 'class="register-row"' <<<"$HOMEPAGE" && ! grep -q 'certified-card' <<<"$HOMEPAGE" && echo 1 || echo 0)"
 # The age is the point: a result from an hour ago says the service is alive in
 # a way a date does not.
 check "each one says how long ago and whether it passed" \
-  "$(grep -qE "certified-verdict is-(pass|fail)" <<<"$HOMEPAGE" && grep -qE "ago<|certified-when" <<<"$HOMEPAGE" && echo 1 || echo 0)"
+  "$(grep -qE "register-verdict is-(pass|fail)" <<<"$HOMEPAGE" && grep -q "register-when" <<<"$HOMEPAGE" && echo 1 || echo 0)"
 # Above the fold: it must come before the explanation, not after it.
 check "it sits above the how-it-works section" \
   "$([ "$(grep -n 'Recently tested' <<<"$HOMEPAGE" | head -1 | cut -d: -f1)" -lt "$(grep -n 'How it works' <<<"$HOMEPAGE" | head -1 | cut -d: -f1)" ] && echo 1 || echo 0)"
-check "each tile links to a real certificate" "$(has "$HOMEPAGE" 'class="certified-card" href="/r/')"
+check "each entry links to a real certificate" "$(has "$HOMEPAGE" 'class="register-row" href="/r/')"
 check "a model appears once, not once per run" \
   "$([ "$(grep -o 'AMD Radeon RX 6600' <<<"$HOMEPAGE" | wc -l)" -le 1 ] && echo 1 || echo 0)"
 # Every card gets a mark generated from its own fingerprint, because product
