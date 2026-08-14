@@ -15,7 +15,7 @@
 
 use libloading::{Library, Symbol};
 use std::ffi::{c_char, c_uint, CStr};
-use std::os::raw::c_void;
+use std::os::raw::{c_int, c_void};
 
 #[cfg(target_os = "windows")]
 const NVML_LIB_NAME: &str = "nvml.dll";
@@ -118,6 +118,84 @@ struct NvmlUtilization {
     memory: c_uint,
 }
 
+/// `nvmlFieldValue_t`, transcribed from NVIDIA's nvml.h.
+///
+/// The layout is asserted in tests rather than trusted, because this project
+/// has already shipped one NVML struct with the fields in the wrong order, and
+/// the symptom was not a crash: it was plausible-looking wrong numbers, which
+/// is the worst way for a hardware reading to be wrong.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NvmlFieldValue {
+    field_id: c_uint,
+    scope_id: c_uint,
+    timestamp: i64,
+    latency_usec: i64,
+    value_type: c_uint,
+    nvml_return: c_uint,
+    /// A union in C. Read through the discriminant above rather than assumed,
+    /// since NVML documents the type as varying by field.
+    value: [u8; 8],
+}
+
+/// `nvmlFanSpeedInfo_v1_t`. `version` is an input the caller must set, encoded
+/// as the struct size in the low bits with the version in the top byte.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NvmlFanSpeedInfo {
+    version: c_uint,
+    fan: c_uint,
+    speed: c_uint,
+}
+
+const NVML_FI_DEV_MEMORY_TEMP: c_uint = 82;
+const NVML_VALUE_TYPE_DOUBLE: c_uint = 0;
+const NVML_VALUE_TYPE_UNSIGNED_INT: c_uint = 1;
+const NVML_VALUE_TYPE_UNSIGNED_LONG: c_uint = 2;
+const NVML_VALUE_TYPE_UNSIGNED_LONG_LONG: c_uint = 3;
+const NVML_VALUE_TYPE_SIGNED_LONG_LONG: c_uint = 4;
+const NVML_VALUE_TYPE_SIGNED_INT: c_uint = 5;
+
+impl NvmlFanSpeedInfo {
+    /// NVML_STRUCT_VERSION(FanSpeedInfo, 1): size in the low bits, version 1 in
+    /// the top byte. Sent as a literal expression of the header's macro so the
+    /// two cannot drift silently.
+    fn v1(fan_index: c_uint) -> Self {
+        NvmlFanSpeedInfo {
+            version: (std::mem::size_of::<NvmlFanSpeedInfo>() as c_uint) | (1u32 << 24),
+            fan: fan_index,
+            speed: 0,
+        }
+    }
+}
+
+impl NvmlFieldValue {
+    /// Reads the union through its discriminant. Anything that does not
+    /// plausibly fit a temperature is rejected rather than coerced, because a
+    /// wrong temperature is worse than an absent one when a watchdog uses it.
+    fn as_temperature_c(&self) -> Option<u32> {
+        if self.nvml_return != 0 {
+            return None;
+        }
+        let raw = self.value;
+        let v: f64 = match self.value_type {
+            NVML_VALUE_TYPE_DOUBLE => f64::from_ne_bytes(raw),
+            NVML_VALUE_TYPE_UNSIGNED_INT | NVML_VALUE_TYPE_SIGNED_INT => {
+                i32::from_ne_bytes([raw[0], raw[1], raw[2], raw[3]]) as f64
+            }
+            NVML_VALUE_TYPE_UNSIGNED_LONG
+            | NVML_VALUE_TYPE_UNSIGNED_LONG_LONG
+            | NVML_VALUE_TYPE_SIGNED_LONG_LONG => i64::from_ne_bytes(raw) as f64,
+            _ => return None,
+        };
+        if (0.0..=150.0).contains(&v) {
+            Some(v as u32)
+        } else {
+            None
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Default, serde::Serialize)]
 pub struct GpuTelemetry {
@@ -189,6 +267,17 @@ pub struct Nvml {
     device_get_utilization_rates: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> i32>,
     device_get_curr_pcie_link_width: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>,
     device_get_max_pcie_link_width: Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>,
+    /// Optional. Memory junction temperature comes through the generic field
+    /// interface rather than nvmlDeviceGetTemperature, whose sensor enum has
+    /// only NVML_TEMPERATURE_GPU in it.
+    device_get_field_values:
+        Option<Symbol<'static, unsafe extern "C" fn(NvmlDevice, c_int, *mut NvmlFieldValue) -> i32>>,
+    /// Optional. Percentage has always been available; actual RPM is newer, and
+    /// the pair is what identifies a fan that is being asked to spin and is
+    /// not, so neither half is read without the other.
+    device_get_fan_speed_rpm:
+        Option<Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut NvmlFanSpeedInfo) -> i32>>,
+    device_get_fan_speed: Option<Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>>,
 }
 
 // NVML_TEMPERATURE_GPU
@@ -215,6 +304,17 @@ impl Nvml {
             // pick `T` on its own, and a bare `let x = sym!(...)` gives the
             // compiler no expected type to unify against until the struct
             // literal below, by which point it's too late (E0282).
+            // Both of the sensors below arrived in later NVML versions, so an
+            // older driver simply will not have them. Missing is a normal
+            // outcome, not a failure: the card is certified without them.
+            macro_rules! opt_sym {
+                ($name:literal, $ty:ty) => {
+                    lib.get::<$ty>($name).ok().map(|f| {
+                        std::mem::transmute::<Symbol<'_, $ty>, Symbol<'static, $ty>>(f)
+                    })
+                };
+            }
+
             macro_rules! sym {
                 ($name:literal, $ty:ty) => {
                     std::mem::transmute::<Symbol<'_, $ty>, Symbol<'static, $ty>>(
@@ -239,6 +339,9 @@ impl Nvml {
             let device_get_utilization_rates = sym!(b"nvmlDeviceGetUtilizationRates\0", unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> i32);
             let device_get_curr_pcie_link_width = sym!(b"nvmlDeviceGetCurrPcieLinkWidth\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
             let device_get_max_pcie_link_width = sym!(b"nvmlDeviceGetMaxPcieLinkWidth\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
+            let device_get_field_values = opt_sym!(b"nvmlDeviceGetFieldValues\0", unsafe extern "C" fn(NvmlDevice, c_int, *mut NvmlFieldValue) -> i32);
+            let device_get_fan_speed_rpm = opt_sym!(b"nvmlDeviceGetFanSpeedRPM\0", unsafe extern "C" fn(NvmlDevice, *mut NvmlFanSpeedInfo) -> i32);
+            let device_get_fan_speed = opt_sym!(b"nvmlDeviceGetFanSpeed\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
 
             let nvml = Nvml {
                 _lib: lib,
@@ -257,6 +360,9 @@ impl Nvml {
                 device_get_utilization_rates,
                 device_get_curr_pcie_link_width,
                 device_get_max_pcie_link_width,
+                device_get_field_values,
+                device_get_fan_speed_rpm,
+                device_get_fan_speed,
             };
 
             let rc = (nvml.init_v2)();
@@ -357,6 +463,43 @@ impl Nvml {
                 _ => (0, 0),
             };
 
+            // Memory junction, through the generic field interface. The whole
+            // point of reading it: the damage this product exists to find is
+            // memory damage, and hot memory is the tell.
+            let memory_temperature_c = self.device_get_field_values.as_ref().and_then(|f| {
+                let mut field = NvmlFieldValue {
+                    field_id: NVML_FI_DEV_MEMORY_TEMP,
+                    scope_id: 0,
+                    timestamp: 0,
+                    latency_usec: 0,
+                    value_type: 0,
+                    nvml_return: 0,
+                    value: [0; 8],
+                };
+                (f(device, 1, &mut field) == 0).then(|| field.as_temperature_c()).flatten()
+            });
+
+            // All or nothing, like the PCIe widths: a commanded percentage with
+            // no measured RPM to compare against says nothing about the fan.
+            let fan = match (&self.device_get_fan_speed_rpm, &self.device_get_fan_speed) {
+                (Some(get_rpm), Some(get_pct)) => {
+                    let mut info = NvmlFanSpeedInfo::v1(0);
+                    let mut pct: c_uint = 0;
+                    if get_rpm(device, &mut info) == 0
+                        && get_pct(device, &mut pct) == 0
+                        && info.speed <= 10_000
+                        && pct <= 100
+                    {
+                        Some((info.speed, pct))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let fan_rpm = fan.map(|(rpm, _)| rpm);
+            let fan_percent = fan.map(|(_, pct)| pct);
+
             Ok(GpuTelemetry {
                 uuid,
                 name,
@@ -372,13 +515,15 @@ impl Nvml {
                 // does not touch: an unsupported field there is an easy way to
                 // read a plausible wrong number, and a wrong temperature is
                 // worse than an absent one when a watchdog depends on it.
+                // No hotspot on NVIDIA: nvmlDeviceGetTemperature's sensor enum
+                // contains only NVML_TEMPERATURE_GPU. GPU-Z and HWiNFO read one
+                // through undocumented means, which this deliberately does not,
+                // since a wrong temperature is worse than an absent one when a
+                // watchdog depends on it.
                 hotspot_temperature_c: None,
-                memory_temperature_c: None,
-                // NVML exposes fan speed as a percentage only; RPM needs the
-                // same undocumented field interface as the extra temperatures,
-                // and the pair is worthless without both halves.
-                fan_rpm: None,
-                fan_percent: None,
+                memory_temperature_c,
+                fan_rpm,
+                fan_percent,
                 power_draw_mw: power.unwrap_or(0),
                 graphics_clock_mhz: gfx_clock.unwrap_or(0),
                 memory_clock_mhz: mem_clock.unwrap_or(0),
@@ -448,6 +593,26 @@ mod tests {
     #[test]
     fn pci_info_matches_nvml_header_layout() {
         use std::mem::offset_of;
+        // The layouts read from NVIDIA's nvml.h. Asserted rather than trusted,
+        // because the last NVML struct that was wrong here did not crash: it
+        // returned plausible wrong numbers, and a hardware reading that is
+        // quietly wrong is the worst kind.
+        assert_eq!(offset_of!(NvmlFieldValue, field_id), 0);
+        assert_eq!(offset_of!(NvmlFieldValue, scope_id), 4);
+        assert_eq!(offset_of!(NvmlFieldValue, timestamp), 8);
+        assert_eq!(offset_of!(NvmlFieldValue, latency_usec), 16);
+        assert_eq!(offset_of!(NvmlFieldValue, value_type), 24);
+        assert_eq!(offset_of!(NvmlFieldValue, nvml_return), 28);
+        assert_eq!(offset_of!(NvmlFieldValue, value), 32);
+        assert_eq!(std::mem::size_of::<NvmlFieldValue>(), 40);
+
+        assert_eq!(std::mem::size_of::<NvmlFanSpeedInfo>(), 12);
+        // NVML_STRUCT_VERSION(FanSpeedInfo, 1) is the struct size with the
+        // version in the top byte. Getting this wrong makes NVML reject the
+        // call rather than return nonsense, but it would look like an
+        // unsupported card, which is a misleading way to fail.
+        assert_eq!(NvmlFanSpeedInfo::v1(0).version, 12 | (1 << 24));
+
         assert_eq!(offset_of!(NvmlPciInfo, bus_id_legacy), 0);
         assert_eq!(offset_of!(NvmlPciInfo, domain), 16);
         assert_eq!(offset_of!(NvmlPciInfo, bus), 20);
@@ -470,6 +635,45 @@ mod tests {
 
     /// pciDeviceId packs the device ID in the high half and the vendor ID in
     /// the low half. An RTX 4070 reports 0x278610DE.
+    /// The union is read through its discriminant, so each type has to land on
+    /// the same number. A field returning a double where an int was assumed is
+    /// how you print 0 degrees for a card that is on fire.
+    #[test]
+    fn a_temperature_reads_the_same_whichever_type_nvml_used() {
+        let make = |value_type: u32, bytes: [u8; 8]| NvmlFieldValue {
+            field_id: NVML_FI_DEV_MEMORY_TEMP,
+            scope_id: 0,
+            timestamp: 0,
+            latency_usec: 0,
+            value_type,
+            nvml_return: 0,
+            value: bytes,
+        };
+        let mut as_u32 = [0u8; 8];
+        as_u32[..4].copy_from_slice(&86u32.to_ne_bytes());
+        assert_eq!(make(NVML_VALUE_TYPE_UNSIGNED_INT, as_u32).as_temperature_c(), Some(86));
+        assert_eq!(make(NVML_VALUE_TYPE_DOUBLE, 86.0f64.to_ne_bytes()).as_temperature_c(), Some(86));
+        assert_eq!(make(NVML_VALUE_TYPE_UNSIGNED_LONG_LONG, 86i64.to_ne_bytes()).as_temperature_c(), Some(86));
+    }
+
+    /// A failed read must be absent, never zero. Zero is a temperature.
+    #[test]
+    fn a_failed_field_read_is_absent_not_cold() {
+        let mut field = NvmlFieldValue {
+            field_id: NVML_FI_DEV_MEMORY_TEMP,
+            scope_id: 0,
+            timestamp: 0,
+            latency_usec: 0,
+            value_type: NVML_VALUE_TYPE_UNSIGNED_INT,
+            nvml_return: 3, // NVML_ERROR_NOT_SUPPORTED
+            value: [0; 8],
+        };
+        assert_eq!(field.as_temperature_c(), None);
+        field.nvml_return = 0;
+        field.value[..4].copy_from_slice(&900u32.to_ne_bytes());
+        assert_eq!(field.as_temperature_c(), None, "implausible readings are rejected");
+    }
+
     #[test]
     fn splits_packed_pci_id() {
         let packed: u32 = 0x2786_10DE;
