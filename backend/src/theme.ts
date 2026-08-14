@@ -383,6 +383,8 @@ ${css}
     <span aria-hidden="true">&middot;</span>
     <a href="/verify">Verify a certificate</a>
     <span aria-hidden="true">&middot;</span>
+    <a href="/changes">Changes</a>
+    <span aria-hidden="true">&middot;</span>
     <a href="/feedback">Feedback</a>
   </p>
 </footer>

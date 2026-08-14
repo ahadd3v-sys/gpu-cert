@@ -151,7 +151,7 @@ export function renderHome(loggedIn: boolean): string {
       <p class="statement">A used GPU listing is a claim with nothing behind it. GPU Cert runs a fixed test protocol against the card in your machine, then issues a signed certificate at a public URL. The buyer checks it themselves. No account needed to run it.</p>
       <div class="hero-actions">
         <a class="btn" href="${DOWNLOAD_URL}">Test your GPU</a>
-        <span class="hero-aside">Windows, 4&nbsp;MB. Runs about 16 minutes.</span>
+        <span class="hero-aside">Windows, 4&nbsp;MB. Runs about 11&nbsp;minutes.</span>
       </div>
       <p class="beta-note"><b>Early access.</b> The tool is new and free to use. Windows only, NVIDIA or AMD. It is unsigned, so Windows will warn you on first run: choose More info, then Run anyway. If anything breaks or a result looks wrong, <a href="/feedback">tell me</a>, that is what this stage is for.</p>
     </section>
@@ -168,7 +168,7 @@ export function renderHome(loggedIn: boolean): string {
         </div>
         <div>
           <p class="protocol-name">VRAM pattern test</p>
-          <p class="protocol-method">A bit-pattern write and verify sweep across the card's active memory, ten minutes, derived from memtest_vulkan.</p>
+          <p class="protocol-method">A bit-pattern write and verify sweep across the card's active memory, five minutes, derived from memtest_vulkan.</p>
           <p class="protocol-catch"><b>Catches</b> the memory damage heavy mining leaves behind. Telemetry alone cannot see it. One error fails the card.</p>
         </div>
         <div class="protocol-block-wide">
@@ -178,7 +178,8 @@ export function renderHome(loggedIn: boolean): string {
         </div>
       </div>
       <hr class="rule">
-      <p class="footer-note">PCIe link width is checked too: a card sitting in a degraded slot, riser or connector fails with that stated as the reason. Any test aborts on its own if the GPU crosses 100&nbsp;°C, and an aborted run is reported as a finding rather than thrown away.</p>
+      <p class="footer-note">Alongside the three tests, the run records what the card will tell it about its own condition: junction and memory temperature where available, fan speed against the speed the driver asked for, and PCIe link width. A junction far above the edge sensor means heat is not reaching the cooler, memory at its throttling point means worn thermal pads, and a fan being asked to spin that is not turning is a fan that has failed. Link width is reported rather than failed, because it describes the slot the card is sitting in, not the card.</p>
+      <p class="footer-note">Any test aborts on its own if the GPU crosses 105&nbsp;°C at the junction, or 100&nbsp;°C where no junction sensor exists, and an aborted run is reported as a finding rather than thrown away.</p>
     </section>
 
     <hr class="rule">
@@ -210,7 +211,7 @@ export function renderHome(loggedIn: boolean): string {
             <li>VBIOS version</li>
             <li>VRAM size</li>
           </ul>
-          <p class="bound-note">Hashed together into the fingerprint printed on the certificate. Show it against a different card and it stops matching.</p>
+          <p class="bound-note">Hashed together into the fingerprint printed on the certificate. On NVIDIA that identifier is burned into the card and follows it anywhere, so a buyer can run the tool and confirm they were sent the card that was tested. AMD publishes no per-card identifier, so there the fingerprint identifies the model, memory size and BIOS rather than the individual card, and each certificate says which of the two it is.</p>
         </aside>
       </div>
     </section>`,
@@ -991,6 +992,112 @@ export function renderAdmin(opts: {
           </table>
         </div>
       </section>
+    `,
+  });
+}
+
+/// One line per release, written for someone deciding whether to re-download
+/// rather than for someone reading the diff.
+///
+/// Hand-written rather than generated from git. A generated log is a list of
+/// commits, and a commit list is the wrong thing to show a seller: they do not
+/// care that a struct moved, they care whether their last certificate is still
+/// worth anything. Only releases that change what a run means get an entry with
+/// any weight to it, and the ones that were purely internal say so in a line.
+interface ReleaseNote {
+  version: string;
+  date: string;
+  /// The headline in plain language. Absent for a maintenance release.
+  summary: string;
+  /// Set when a release changed what a number on a certificate means, which is
+  /// the only reason anyone reading this needs to care about an old one.
+  changesResults?: boolean;
+}
+
+const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "0.7.1", date: "14 Aug 2026", summary: "Memory temperature and fan speed are now read on NVIDIA as well as AMD." },
+  {
+    version: "0.7.0",
+    date: "14 Aug 2026",
+    summary:
+      "Reads the junction temperature the card actually throttles on, not just the edge sensor, and the safety cutoff moves with it. Memory temperature and fan speed are recorded for the first time: memory at its throttling point means worn thermal pads, and a fan being asked to spin that is not turning has failed.",
+    changesResults: true,
+  },
+  { version: "0.6.2", date: "13 Aug 2026", summary: "A run that stalls while preparing the render test now says so instead of going quiet." },
+  {
+    version: "0.6.0 to 0.6.1",
+    date: "13 Aug 2026",
+    summary:
+      "The stress test now works memory as well as compute. Its working set was small enough to sit entirely in cache, so it never touched VRAM at all. A whole run is about eleven minutes instead of sixteen.",
+    changesResults: true,
+  },
+  {
+    version: "0.5.7 to 0.5.8",
+    date: "13 Aug 2026",
+    summary:
+      "The stress test was not stressing. It drew 149 W on a 220 W card while reporting the GPU as 98% busy, because the load left most of the card idle. It now holds cards at their rated power.",
+    changesResults: true,
+  },
+  { version: "0.5.3 to 0.5.6", date: "13 Aug 2026", summary: "New console: one screen that updates in place rather than pages of scrolling output. Cancelled runs now record that they were cancelled." },
+  {
+    version: "0.5.2",
+    date: "13 Aug 2026",
+    summary:
+      "Fixed a crash on some AMD cards. The client was allocating from memory types the Vulkan specification forbids it to use without an extension it does not enable.",
+    changesResults: true,
+  },
+  {
+    version: "0.5.1",
+    date: "13 Aug 2026",
+    summary:
+      "Fixed the bug that capped every run at 4032 MB of memory tested regardless of card size. Coverage went from 25% to 85% on a 16 GB card. Allocations now ask each buffer which memory it accepts instead of choosing once for the whole device.",
+    changesResults: true,
+  },
+  { version: "0.4.0 to 0.4.2", date: "13 Aug 2026", summary: "A certificate now requires a test session opened before the run and timed by the server, so one cannot be produced without spending the time. Runs upload what machine they were on, so a failure can be diagnosed without asking anyone for their console." },
+  {
+    version: "0.2.0 to 0.3.1",
+    date: "13 Aug 2026",
+    summary:
+      "The memory test is split across several buffers. A single descriptor can only address 4 GB, and exceeding that silently wrapped, which is why earlier runs reported billions of errors on healthy cards.",
+    changesResults: true,
+  },
+  { version: "0.1.0 to 0.1.9", date: "12 to 13 Aug 2026", summary: "First working client: three tests, hardware fingerprint, signed certificate." },
+];
+
+export function renderChangelog(): string {
+  const rows = RELEASE_NOTES.map(
+    (r) => `<section class="release">
+      <div class="release-head">
+        <h2>${esc(r.version)}</h2>
+        <span class="release-date">${esc(r.date)}</span>
+        ${r.changesResults ? `<span class="release-flag">changes what results mean</span>` : ""}
+      </div>
+      <p class="release-summary">${esc(r.summary)}</p>
+    </section>`
+  ).join("");
+
+  return sitePage({
+    title: "Changes",
+    nav: `<a href="/verify">Verify</a><a href="/feedback">Feedback</a>`,
+    width: 900,
+    css: `
+      .release { padding: 18px 0; border-top: 1px solid var(--paper-deep); }
+      .release:first-of-type { border-top: none; }
+      .release-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+      .release-head h2 { margin: 0; font-size: 17px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+      .release-date { font-size: 12.5px; color: var(--ink-muted); }
+      /* The only distinction a reader actually needs: whether an older
+         certificate of theirs still means what it says. */
+      .release-flag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+                      color: var(--fail); border: 1px solid var(--fail); border-radius: 2px; padding: 1px 6px; }
+      .release-summary { margin: 6px 0 0; color: var(--ink-muted); line-height: 1.6; max-width: 68ch; }
+    `,
+    body: `
+      <h1>Changes</h1>
+      <p class="statement">Every release of the client, most recent first. Certificates record the version that produced them, so an older one can be read against what the tool did at the time.</p>
+      <p class="statement">Runs from superseded versions are refused rather than accepted quietly. A certificate is a claim about a card, and one produced by a build known to measure the wrong thing is worse than no certificate at all. That is why the tool sometimes asks you to download it again.</p>
+      ${rows}
+      <p class="footer-note" style="margin-top: 28px;">Full commit history and source: <a href="https://github.com/ahadd3v-sys/gpu-cert">github.com/ahadd3v-sys/gpu-cert</a></p>
     `,
   });
 }

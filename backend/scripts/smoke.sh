@@ -180,6 +180,22 @@ check "early access is stated up front" "$(has "$(curl -s http://localhost:3111/
 # Never on the certificate: a buyer checking a stranger's card needs the
 # document to read as settled.
 check "the certificate says nothing about beta" "$(curl -s "http://localhost:3111/r/$PASS_ID" | grep -qi "early access\|beta" && echo 0 || echo 1)"
+# The page the client's upgrade message sends people to when it refuses an old
+# version, so it has to exist and has to say why that happens.
+check "the changes page renders" "$(has "$(curl -s http://localhost:3111/changes)" "Changes")"
+check "it explains why old versions are refused" \
+  "$(has "$(curl -s http://localhost:3111/changes)" "refused rather than accepted quietly")"
+check "it flags the releases that changed what results mean" \
+  "$(has "$(curl -s http://localhost:3111/changes)" "changes what results mean")"
+check "the footer links to it" "$(has "$(curl -s http://localhost:3111/)" 'href="/changes"')"
+
+# Copy that goes stale the moment a duration or a rule changes, and did.
+check "the home page states the current run length" "$(has "$(curl -s http://localhost:3111/)" "11&nbsp;minutes")"
+check "the home page no longer claims PCIe width fails a card" \
+  "$(curl -s http://localhost:3111/ | grep -q "riser or connector fails" && echo 0 || echo 1)"
+check "the home page is honest about AMD fingerprints" \
+  "$(has "$(curl -s http://localhost:3111/)" "AMD publishes no per-card identifier")"
+
 check "login renders" "$(has "$(curl -s http://localhost:3111/login)" "Log in")"
 # The site name is appended to every title so a truncated tab is still
 # identifiable, which on the home page used to read "GPU Cert, GPU Cert".

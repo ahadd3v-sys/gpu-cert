@@ -58,7 +58,7 @@ import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/p
 import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
 import { renderReportPage } from "./report-page.js";
 import { renderBadge } from "./badge.js";
-import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback, renderNotice, renderForgotPassword, renderResetPassword, renderAdmin } from "./pages.js";
+import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback, renderNotice, renderForgotPassword, renderResetPassword, renderAdmin, renderChangelog } from "./pages.js";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpucert.com";
 const SESSION_COOKIE_OPTS = {
@@ -577,6 +577,10 @@ async function requireAdmin(
   }
   return { ok: true };
 }
+
+// Linked from the footer rather than the masthead: useful when the tool asks
+// someone to download it again, noise the rest of the time.
+app.get("/changes", (c) => c.html(renderChangelog()));
 
 app.get("/admin", async (c) => {
   const gate = await requireAdmin(c);
