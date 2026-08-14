@@ -53,6 +53,19 @@ function loggedOutNav(next?: string): string {
 // ---------------------------------------------------------------- home
 
 const HOME_CSS = `
+  .certified { margin-top: 34px; }
+  .certified-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; margin-top: 12px; }
+  /* A tile, not a photograph. See renderHome for why there are no images. */
+  .certified-card { display: block; padding: 12px 14px; border: 1px solid var(--paper-deep);
+                    text-decoration: none; color: var(--ink); background: var(--paper); }
+  .certified-card:hover { border-color: var(--ink-muted); }
+  .certified-name { display: block; font-family: "Space Grotesk", sans-serif; font-weight: 600;
+                    font-size: 14px; line-height: 1.3; }
+  .certified-meta { display: flex; gap: 8px; align-items: baseline; margin-top: 5px;
+                    font-size: 11.5px; color: var(--ink-muted); }
+  .certified-pass { color: var(--pass); font-weight: 600; }
+  .certified-fail { color: var(--fail); font-weight: 600; }
+
   .hero { padding: 6px 0 4px; }
   .hero-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
   .hero-aside { font-size: 12.5px; color: var(--ink-muted); }
@@ -139,7 +152,44 @@ const HOME_CSS = `
   }
 `;
 
-export function renderHome(loggedIn: boolean): string {
+export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): string {
+  // Deliberately no product photography.
+  //
+  // Fetching a picture per GPU does not survive contact with the problem: there
+  // is no reliable source keyed by model name, new cards appear constantly so
+  // any lookup table rots, board partners' versions of the same chip look
+  // nothing alike, and hotlinking someone else's product shots is a licensing
+  // question nobody wants. It would also make the front page depend on a
+  // third-party request that can be slow or gone.
+  //
+  // The model name set in the certificate's own type does not have any of those
+  // problems and works for every card ever released, including ones that do not
+  // exist yet.
+  const certifiedSection =
+    certified.length === 0
+      ? ""
+      : `<section class="certified">
+          <h2 class="section-label">Cards certified so far</h2>
+          <div class="certified-grid">
+            ${certified
+              .map(
+                (r) => `<a class="certified-card" href="/r/${esc(r.id)}">
+                  <span class="certified-name">${esc(r.device_name)}</span>
+                  <span class="certified-meta">
+                    <span class="${r.verdict === "Pass" ? "certified-pass" : "certified-fail"}">${esc(r.verdict)}</span>
+                    <span>${
+                      r.fingerprint_vram_total_bytes > 0
+                        ? Math.round((r.vram_bytes_tested / r.fingerprint_vram_total_bytes) * 100)
+                        : 0
+                    }% of memory tested</span>
+                  </span>
+                </a>`
+              )
+              .join("")}
+          </div>
+          <p class="footer-note">One per model, most recent first. Open any of them: a certificate is public and needs no account to read.</p>
+        </section>`;
+
   return sitePage({
     title: "GPU Cert",
     nav: loggedIn ? loggedInNav() : loggedOutNav(),
@@ -181,6 +231,8 @@ export function renderHome(loggedIn: boolean): string {
       <p class="footer-note">Alongside the three tests, the run records what the card will tell it about its own condition: junction and memory temperature where available, fan speed against the speed the driver asked for, and PCIe link width. A junction far above the edge sensor means heat is not reaching the cooler, memory at its throttling point means worn thermal pads, and a fan being asked to spin that is not turning is a fan that has failed. Link width is reported rather than failed, because it describes the slot the card is sitting in, not the card.</p>
       <p class="footer-note">Any test aborts on its own if the GPU crosses 105&nbsp;°C at the junction, or 100&nbsp;°C where no junction sensor exists, and an aborted run is reported as a finding rather than thrown away.</p>
     </section>
+
+    ${certifiedSection}
 
     <hr class="rule">
 
@@ -890,6 +942,17 @@ export function renderAdmin(opts: {
   const TURSO_FREE_BYTES = 5 * 1024 ** 3;
   const TURSO_FREE_WRITES_MONTHLY = 10_000_000;
 
+  // Vercel Hobby: 100 GB of bandwidth a month.
+  const VERCEL_FREE_BANDWIDTH = 100 * 1024 ** 3;
+  // Measured against production rather than guessed: a certificate page, a
+  // badge, and the share of each that is inlined font data.
+  const PAGE_BYTES = 111_254;
+  const BADGE_BYTES = 14_162;
+  const FONT_BYTES = 96_000;
+  // One session open, roughly eleven heartbeats over an eleven minute run, one
+  // submission, and the browser opening the finished certificate.
+  const REQUESTS_PER_RUN = 1 + 11 + 1 + 2;
+
   const st = opts.storage;
   const mb = (bytes: number) => (bytes / 1024 ** 2).toFixed(1);
   const usedPct = (st.bytes / TURSO_FREE_BYTES) * 100;
@@ -906,6 +969,11 @@ export function renderAdmin(opts: {
   // so the historical figure describes a client nobody runs.
   const perCert = Math.max(st.bytesPerRecentCertificate, 1);
   const certificatesUntilFull = Math.floor((TURSO_FREE_BYTES - st.bytes) / perCert);
+
+  // Bandwidth is dominated by people reading certificates, which is the point
+  // of the product, so it is the number that will move first.
+  const bandwidthBytes = opts.overview.page_views * PAGE_BYTES + opts.overview.badge_views * BADGE_BYTES;
+  const viewsUntilBandwidthLimit = Math.floor((VERCEL_FREE_BANDWIDTH - bandwidthBytes) / PAGE_BYTES);
 
   const infra = `<section class="sheet-section">
     <h2>Infrastructure</h2>
@@ -925,7 +993,18 @@ export function renderAdmin(opts: {
         <tr><td>Everything else</td><td class="mono">${mb(Math.max(st.bytes - st.telemetryBytes - st.logBytes - st.environmentBytes, 0))} MB</td><td class="mono">rest</td></tr>
       </tbody>
     </table>
-    <p class="section-note">Vercel usage is not read here for the same credential reason. A run costs roughly ${WRITES_PER_RUN} requests, so request volume tracks the run count above; the dashboard at vercel.com has the authoritative bandwidth and invocation figures.</p>
+  </section>
+
+  <section class="sheet-section">
+    <h2>Hosting</h2>
+    <p class="section-note">Derived from what this site actually serves, not from Vercel's API. Vercel issues no read-only token: one scoped to read usage can also destroy the project, so keeping one in a web process to render a number is a worse idea than doing the arithmetic. The dashboard at vercel.com remains authoritative.</p>
+    <div class="stats">
+      ${stat("Requests / run", String(REQUESTS_PER_RUN), "session, heartbeats, submission")}
+      ${stat("Page weight", `${Math.round(PAGE_BYTES / 1024)} KB`, "a certificate, fonts included")}
+      ${stat("Bandwidth used", `${(bandwidthBytes / 1024 ** 3).toFixed(3)} GB`, `${((bandwidthBytes / VERCEL_FREE_BANDWIDTH) * 100).toFixed(2)}% of the 100 GB free tier`)}
+      ${stat("Room left", viewsUntilBandwidthLimit.toLocaleString("en-GB"), "more certificate opens this month")}
+    </div>
+    <p class="section-note">Most of that page weight is the two fonts, embedded in every response because they are inlined rather than served as files a browser can cache. Serving them separately would cut a repeat visit by roughly ${Math.round((1 - (PAGE_BYTES - FONT_BYTES) / PAGE_BYTES) * 100)}% and multiply the headroom above by about ${Math.round(PAGE_BYTES / Math.max(PAGE_BYTES - FONT_BYTES, 1))}. Not worth doing at this traffic; worth doing before it matters.</p>
   </section>`;
 
   const reportRows = opts.reports
@@ -1005,18 +1084,21 @@ export function renderAdmin(opts: {
     `,
     body: `
       <h1>Admin</h1>
+      <p class="section-note">Five numbers, because the rest were noise. Everything else is in the tables below.</p>
       <div class="stats">
-        ${stat("Certificates", o.reports)}
-        ${stat("Distinct cards", o.cards)}
-        ${stat("Failed cards", o.failed_cards)}
-        ${stat("Claimed", o.claimed, `${pct(o.claimed, o.reports)}% of certificates`)}
-        ${stat("Users", o.users)}
-        ${stat("Runs started", o.sessions)}
-        ${stat("Completed", o.completed, `${pct(o.completed, o.sessions)}% of runs`)}
-        ${stat("Failed runs", o.failed_runs)}
-        ${stat("Badge views", o.badge_views)}
-        ${stat("Page views", o.page_views, `${pct(o.page_views, o.badge_views)}% clickthrough`)}
-        ${stat("Feedback", o.feedback)}
+        ${stat(
+          "Clickthrough",
+          o.badge_views > 0 ? `${pct(o.page_views, o.badge_views)}%` : "no data",
+          `${o.page_views} opens from ${o.badge_views} badge views`
+        )}
+        ${stat(
+          "Runs finished",
+          o.sessions > 0 ? `${pct(o.completed, o.sessions)}%` : "no data",
+          `${o.completed} of ${o.sessions} produced a certificate`
+        )}
+        ${stat("Cards found faulty", o.failed_cards, `of ${o.reports} certificates`)}
+        ${stat("This week", o.reports_week, `certificates, ${o.page_views_week} opens`)}
+        ${stat("Runs that broke", o.failed_week, "in the last 7 days, see below")}
       </div>
 
       ${infra}

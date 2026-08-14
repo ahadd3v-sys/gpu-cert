@@ -31,6 +31,7 @@ import {
   adminSessionDetail,
   adminFeedback,
   adminStorage,
+  recentlyCertifiedModels,
   consumeTestSession,
   countRecentSessions,
   createFeedback,
@@ -750,7 +751,10 @@ app.post("/feedback", async (c) => {
 
 app.get("/", async (c) => {
   const userId = await getSessionUserId(c);
-  return c.html(renderHome(userId !== null));
+  // Failing soft: the front page must render even if this query does not. It
+  // is social proof, not the product.
+  const certified = await recentlyCertifiedModels().catch(() => []);
+  return c.html(renderHome(userId !== null, certified));
 });
 
 app.get("/login", (c) => {

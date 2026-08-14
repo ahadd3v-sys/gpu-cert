@@ -564,7 +564,11 @@ export async function adminOverview(): Promise<Record<string, number>> {
     (SELECT COUNT(*) FROM test_sessions WHERE failed_at IS NOT NULL) failed_runs,
     (SELECT COUNT(*) FROM report_views WHERE kind = 'page') page_views,
     (SELECT COUNT(*) FROM report_views WHERE kind = 'badge') badge_views,
-    (SELECT COUNT(*) FROM feedback) feedback`);
+    (SELECT COUNT(*) FROM feedback) feedback,
+    (SELECT COUNT(*) FROM reports WHERE created_at > datetime('now', '-7 days')) reports_week,
+    (SELECT COUNT(*) FROM report_views WHERE kind = 'page' AND created_at > datetime('now', '-7 days')) page_views_week,
+    (SELECT COUNT(*) FROM report_views WHERE kind = 'badge' AND created_at > datetime('now', '-7 days')) badge_views_week,
+    (SELECT COUNT(*) FROM test_sessions WHERE failed_at IS NOT NULL AND started_at > datetime('now', '-7 days')) failed_week`);
   const row = res.rows[0] as unknown as Record<string, number>;
   return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, Number(v)]));
 }
@@ -655,6 +659,31 @@ export async function adminStorage(): Promise<Record<string, number>> {
     bytesPerRecentCertificate: Math.round(avgCurrent),
     certificatesMeasured: current.length,
   };
+}
+
+/// The most recent certificate for each distinct card model.
+///
+/// One per model, not a feed of the last N. A feed at this volume shows the
+/// same RX 6600 three times and reads as "almost nobody uses this", which is
+/// the opposite of what putting it on the front page is for. One per model
+/// stays honest, grows naturally as different cards arrive, and gives a
+/// visitor something better than marketing copy: a real certificate they can
+/// open and read.
+///
+/// Newest per model rather than best, so an early result from a build that
+/// measured the wrong thing is replaced by the current one rather than
+/// preserved because it flattered.
+export async function recentlyCertifiedModels(limit = 8): Promise<ReportRow[]> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT ${REPORT_COLUMNS} FROM reports r
+          WHERE created_at = (
+            SELECT MAX(created_at) FROM reports WHERE device_name = r.device_name
+          )
+          ORDER BY created_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  return res.rows as unknown as ReportRow[];
 }
 
 export async function adminFeedback(limit = 50): Promise<Record<string, unknown>[]> {

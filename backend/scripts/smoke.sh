@@ -182,6 +182,18 @@ check "early access is stated up front" "$(has "$(curl -s http://localhost:3111/
 check "the certificate says nothing about beta" "$(curl -s "http://localhost:3111/r/$PASS_ID" | grep -qi "early access\|beta" && echo 0 || echo 1)"
 # The page the client's upgrade message sends people to when it refuses an old
 # version, so it has to exist and has to say why that happens.
+# One tile per model, not a feed. A feed at this volume shows the same card
+# three times and reads as "almost nobody uses this", on the front page.
+HOMEPAGE=$(curl -s http://localhost:3111/)
+check "the home page shows certified cards" "$(has "$HOMEPAGE" "Cards certified so far")"
+check "each tile links to a real certificate" "$(has "$HOMEPAGE" 'class="certified-card" href="/r/')"
+check "a model appears once, not once per run" \
+  "$([ "$(grep -o 'AMD Radeon RX 6600' <<<"$HOMEPAGE" | wc -l)" -le 1 ] && echo 1 || echo 0)"
+# Product photography would need a source keyed by model name that stays
+# current as new cards ship. There isn't one, so there are no images.
+check "no external image requests on the front page" \
+  "$(grep -qE '<img|background-image' <<<"$HOMEPAGE" && echo 0 || echo 1)"
+
 check "the changes page renders" "$(has "$(curl -s http://localhost:3111/changes)" "Changes")"
 check "it explains why old versions are refused" \
   "$(has "$(curl -s http://localhost:3111/changes)" "refused rather than accepted quietly")"
