@@ -72,6 +72,15 @@ const HOTSPOT_DELTA_NOTE_C = 45;
 /// Bearings are the usual casualty of a card that ran for years without
 /// stopping. Below this many RPM against a meaningful commanded percentage, it
 /// is not turning.
+///
+/// AMD only in practice, and by necessity rather than by choice. The check
+/// needs one measured number and one commanded number, and only ADL supplies
+/// the measured half: PMLOG_FAN_RPM is a tachometer reading. Every NVML fan
+/// call returns the driver's intended speed, documented with the note that a
+/// physically blocked fan "will not match the actual fan speed", so on NVIDIA
+/// both halves would be the same intention and the comparison would be empty.
+/// The client sends no fan reading at all there, and these samples are absent
+/// rather than zero, which is why the null guards below matter.
 const FAN_STALLED_RPM = 200;
 const FAN_COMMANDED_PCT = 30;
 const CLOCK_INSTABILITY_FAIL_PCT = 8;

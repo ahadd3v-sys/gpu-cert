@@ -138,16 +138,6 @@ struct NvmlFieldValue {
     value: [u8; 8],
 }
 
-/// `nvmlFanSpeedInfo_v1_t`. `version` is an input the caller must set, encoded
-/// as the struct size in the low bits with the version in the top byte.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct NvmlFanSpeedInfo {
-    version: c_uint,
-    fan: c_uint,
-    speed: c_uint,
-}
-
 const NVML_FI_DEV_MEMORY_TEMP: c_uint = 82;
 const NVML_VALUE_TYPE_DOUBLE: c_uint = 0;
 const NVML_VALUE_TYPE_UNSIGNED_INT: c_uint = 1;
@@ -155,19 +145,6 @@ const NVML_VALUE_TYPE_UNSIGNED_LONG: c_uint = 2;
 const NVML_VALUE_TYPE_UNSIGNED_LONG_LONG: c_uint = 3;
 const NVML_VALUE_TYPE_SIGNED_LONG_LONG: c_uint = 4;
 const NVML_VALUE_TYPE_SIGNED_INT: c_uint = 5;
-
-impl NvmlFanSpeedInfo {
-    /// NVML_STRUCT_VERSION(FanSpeedInfo, 1): size in the low bits, version 1 in
-    /// the top byte. Sent as a literal expression of the header's macro so the
-    /// two cannot drift silently.
-    fn v1(fan_index: c_uint) -> Self {
-        NvmlFanSpeedInfo {
-            version: (std::mem::size_of::<NvmlFanSpeedInfo>() as c_uint) | (1u32 << 24),
-            fan: fan_index,
-            speed: 0,
-        }
-    }
-}
 
 impl NvmlFieldValue {
     /// Reads the union through its discriminant. Anything that does not
@@ -272,12 +249,6 @@ pub struct Nvml {
     /// only NVML_TEMPERATURE_GPU in it.
     device_get_field_values:
         Option<Symbol<'static, unsafe extern "C" fn(NvmlDevice, c_int, *mut NvmlFieldValue) -> i32>>,
-    /// Optional. Percentage has always been available; actual RPM is newer, and
-    /// the pair is what identifies a fan that is being asked to spin and is
-    /// not, so neither half is read without the other.
-    device_get_fan_speed_rpm:
-        Option<Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut NvmlFanSpeedInfo) -> i32>>,
-    device_get_fan_speed: Option<Symbol<'static, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32>>,
 }
 
 // NVML_TEMPERATURE_GPU
@@ -340,8 +311,6 @@ impl Nvml {
             let device_get_curr_pcie_link_width = sym!(b"nvmlDeviceGetCurrPcieLinkWidth\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
             let device_get_max_pcie_link_width = sym!(b"nvmlDeviceGetMaxPcieLinkWidth\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
             let device_get_field_values = opt_sym!(b"nvmlDeviceGetFieldValues\0", unsafe extern "C" fn(NvmlDevice, c_int, *mut NvmlFieldValue) -> i32);
-            let device_get_fan_speed_rpm = opt_sym!(b"nvmlDeviceGetFanSpeedRPM\0", unsafe extern "C" fn(NvmlDevice, *mut NvmlFanSpeedInfo) -> i32);
-            let device_get_fan_speed = opt_sym!(b"nvmlDeviceGetFanSpeed\0", unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> i32);
 
             let nvml = Nvml {
                 _lib: lib,
@@ -361,8 +330,6 @@ impl Nvml {
                 device_get_curr_pcie_link_width,
                 device_get_max_pcie_link_width,
                 device_get_field_values,
-                device_get_fan_speed_rpm,
-                device_get_fan_speed,
             };
 
             let rc = (nvml.init_v2)();
@@ -479,27 +446,6 @@ impl Nvml {
                 (f(device, 1, &mut field) == 0).then(|| field.as_temperature_c()).flatten()
             });
 
-            // All or nothing, like the PCIe widths: a commanded percentage with
-            // no measured RPM to compare against says nothing about the fan.
-            let fan = match (&self.device_get_fan_speed_rpm, &self.device_get_fan_speed) {
-                (Some(get_rpm), Some(get_pct)) => {
-                    let mut info = NvmlFanSpeedInfo::v1(0);
-                    let mut pct: c_uint = 0;
-                    if get_rpm(device, &mut info) == 0
-                        && get_pct(device, &mut pct) == 0
-                        && info.speed <= 10_000
-                        && pct <= 100
-                    {
-                        Some((info.speed, pct))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-            let fan_rpm = fan.map(|(rpm, _)| rpm);
-            let fan_percent = fan.map(|(_, pct)| pct);
-
             Ok(GpuTelemetry {
                 uuid,
                 name,
@@ -522,8 +468,26 @@ impl Nvml {
                 // watchdog depends on it.
                 hotspot_temperature_c: None,
                 memory_temperature_c,
-                fan_rpm,
-                fan_percent,
+                // No fan reading on NVIDIA either, for the same reason and on
+                // the vendor's own authority. Every NVML fan call carries the
+                // note "the reported speed is the intended fan speed; if the
+                // fan is physically blocked and unable to spin, the output will
+                // not match the actual fan speed". That is a description of the
+                // one thing this check exists to catch. GetFanSpeed (percent)
+                // and GetFanSpeedRPM are the same intended value in two units,
+                // so comparing them is not a measurement, and a seized fan is
+                // precisely the case NVML documents it cannot see.
+                //
+                // On a consumer GeForce board the fan curve belongs to the
+                // VBIOS rather than the driver, so that intent is usually just
+                // zero: an RTX 3070 held at 220 W and 76 C reported 0 RPM and
+                // 0% for a full five-minute run with its fans plainly turning
+                // (report 15ccec8b, the run that found this).
+                //
+                // AMD is genuinely different and keeps its fan check: ADL reads
+                // PMLOG_FAN_RPM, a measured tachometer value from the SMU.
+                fan_rpm: None,
+                fan_percent: None,
                 power_draw_mw: power.unwrap_or(0),
                 graphics_clock_mhz: gfx_clock.unwrap_or(0),
                 memory_clock_mhz: mem_clock.unwrap_or(0),
@@ -605,13 +569,6 @@ mod tests {
         assert_eq!(offset_of!(NvmlFieldValue, nvml_return), 28);
         assert_eq!(offset_of!(NvmlFieldValue, value), 32);
         assert_eq!(std::mem::size_of::<NvmlFieldValue>(), 40);
-
-        assert_eq!(std::mem::size_of::<NvmlFanSpeedInfo>(), 12);
-        // NVML_STRUCT_VERSION(FanSpeedInfo, 1) is the struct size with the
-        // version in the top byte. Getting this wrong makes NVML reject the
-        // call rather than return nonsense, but it would look like an
-        // unsupported card, which is a misleading way to fail.
-        assert_eq!(NvmlFanSpeedInfo::v1(0).version, 12 | (1 << 24));
 
         assert_eq!(offset_of!(NvmlPciInfo, bus_id_legacy), 0);
         assert_eq!(offset_of!(NvmlPciInfo, domain), 16);

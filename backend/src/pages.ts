@@ -339,7 +339,7 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
         </div>
       </div>
       <hr class="rule">
-      <p class="footer-note">Alongside the three tests, the run records what the card will tell it about its own condition: junction and memory temperature where available, fan speed against the speed the driver asked for, and PCIe link width. A junction far above the edge sensor means heat is not reaching the cooler, memory at its throttling point means worn thermal pads, and a fan being asked to spin that is not turning is a fan that has failed. Link width is reported rather than failed, because it describes the slot the card is sitting in, not the card.</p>
+      <p class="footer-note">Alongside the three tests, the run records what the card will tell it about its own condition, and only what it will actually tell it. A junction temperature far above the edge sensor means heat is not reaching the cooler, and memory sitting at its throttling point means worn thermal pads. On AMD cards the measured fan speed is read against the speed being asked for, so a fan that has seized shows up as one that is being commanded and is not turning; NVIDIA reports only the speed its driver intends, which is the same number twice and cannot show a blocked fan, so no fan reading is taken there rather than a meaningless one recorded. Link width is reported rather than failed, because it describes the slot the card is sitting in, not the card.</p>
       <p class="footer-note">Any test aborts on its own if the GPU crosses 105&nbsp;°C at the junction, or 100&nbsp;°C where no junction sensor exists, and an aborted run is reported as a finding rather than thrown away.</p>
     </section>
 
@@ -1277,12 +1277,19 @@ interface ReleaseNote {
 }
 
 const RELEASE_NOTES: ReleaseNote[] = [
-  { version: "0.7.1", date: "14 Aug 2026", summary: "Memory temperature and fan speed are now read on NVIDIA as well as AMD." },
+  {
+    version: "0.7.2",
+    date: "14 Aug 2026",
+    summary:
+      "Withdraws the fan check on NVIDIA cards, which 0.7.1 should not have claimed. NVIDIA reports the fan speed its driver intends rather than the speed measured at the fan, and documents that a physically blocked fan will not change that number, so the reading cannot show the failure it was there to find. The first card to run 0.7.1 reported 0 RPM for five minutes at 220 W with its fans plainly turning. No certificate was affected, because a reading of zero never met the threshold to fail anything. The check stands on AMD, where the fan speed is measured rather than intended.",
+    changesResults: true,
+  },
+  { version: "0.7.1", date: "14 Aug 2026", summary: "Memory temperature is now read on NVIDIA as well as AMD, where the card exposes it." },
   {
     version: "0.7.0",
     date: "14 Aug 2026",
     summary:
-      "Reads the junction temperature the card actually throttles on, not just the edge sensor, and the safety cutoff moves with it. Memory temperature and fan speed are recorded for the first time: memory at its throttling point means worn thermal pads, and a fan being asked to spin that is not turning has failed.",
+      "Reads the junction temperature the card actually throttles on, not just the edge sensor, and the safety cutoff moves with it. Memory temperature and fan speed are recorded for the first time: memory at its throttling point means worn thermal pads, and an AMD fan being asked to spin that is not turning has failed.",
     changesResults: true,
   },
   { version: "0.6.2", date: "13 Aug 2026", summary: "A run that stalls while preparing the render test now says so instead of going quiet." },
