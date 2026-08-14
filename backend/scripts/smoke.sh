@@ -185,7 +185,14 @@ check "the certificate says nothing about beta" "$(curl -s "http://localhost:311
 # One tile per model, not a feed. A feed at this volume shows the same card
 # three times and reads as "almost nobody uses this", on the front page.
 HOMEPAGE=$(curl -s http://localhost:3111/)
-check "the home page shows certified cards" "$(has "$HOMEPAGE" "Cards certified so far")"
+check "the home page shows recently tested cards" "$(has "$HOMEPAGE" "Recently tested")"
+# The age is the point: a result from an hour ago says the service is alive in
+# a way a date does not.
+check "each one says how long ago and whether it passed" \
+  "$(grep -qE "certified-verdict is-(pass|fail)" <<<"$HOMEPAGE" && grep -qE "ago<|certified-when" <<<"$HOMEPAGE" && echo 1 || echo 0)"
+# Above the fold: it must come before the explanation, not after it.
+check "it sits above the how-it-works section" \
+  "$([ "$(grep -n 'Recently tested' <<<"$HOMEPAGE" | head -1 | cut -d: -f1)" -lt "$(grep -n 'How it works' <<<"$HOMEPAGE" | head -1 | cut -d: -f1)" ] && echo 1 || echo 0)"
 check "each tile links to a real certificate" "$(has "$HOMEPAGE" 'class="certified-card" href="/r/')"
 check "a model appears once, not once per run" \
   "$([ "$(grep -o 'AMD Radeon RX 6600' <<<"$HOMEPAGE" | wc -l)" -le 1 ] && echo 1 || echo 0)"

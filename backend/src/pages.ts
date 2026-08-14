@@ -21,6 +21,27 @@ function formatCount(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/// "3 hours ago" rather than a date.
+///
+/// On this section the age is the point: a certificate from an hour ago says
+/// the service is alive in a way "14 Aug 2026" does not, and a visitor deciding
+/// whether to trust a stranger's link wants to know how fresh the test was.
+/// Falls back to a date past a week, where relative time stops being useful and
+/// starts being coy.
+function timeAgo(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (seconds < 90) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days <= 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return formatDate(iso);
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
 }
@@ -53,18 +74,24 @@ function loggedOutNav(next?: string): string {
 // ---------------------------------------------------------------- home
 
 const HOME_CSS = `
-  .certified { margin-top: 34px; }
+  /* Sits directly under the hero: the freshest evidence the service is real,
+     and the thing a visitor should meet before any explanation of it. */
+  .certified { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--paper-deep); }
+  .certified-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .certified-all { font-size: 12px; color: var(--ink-muted); }
   .certified-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; margin-top: 12px; }
   /* A tile, not a photograph. See renderHome for why there are no images. */
   .certified-card { display: block; padding: 12px 14px; border: 1px solid var(--paper-deep);
                     text-decoration: none; color: var(--ink); background: var(--paper); }
   .certified-card:hover { border-color: var(--ink-muted); }
-  .certified-name { display: block; font-family: "Space Grotesk", sans-serif; font-weight: 600;
-                    font-size: 14px; line-height: 1.3; }
-  .certified-meta { display: flex; gap: 8px; align-items: baseline; margin-top: 5px;
-                    font-size: 11.5px; color: var(--ink-muted); }
-  .certified-pass { color: var(--pass); font-weight: 600; }
-  .certified-fail { color: var(--fail); font-weight: 600; }
+  .certified-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .certified-verdict { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .certified-verdict.is-pass { color: var(--pass); }
+  .certified-verdict.is-fail { color: var(--fail); }
+  .certified-when { font-size: 11px; color: var(--ink-muted); }
+  .certified-name { display: block; margin-top: 6px; font-family: "Space Grotesk", sans-serif;
+                    font-weight: 600; font-size: 14px; line-height: 1.3; }
+  .certified-meta { display: block; margin-top: 3px; font-size: 11.5px; color: var(--ink-muted); }
 
   .hero { padding: 6px 0 4px; }
   .hero-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
@@ -169,25 +196,31 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
     certified.length === 0
       ? ""
       : `<section class="certified">
-          <h2 class="section-label">Cards certified so far</h2>
+          <div class="certified-head">
+            <h2 class="section-label">Recently tested</h2>
+            <a class="certified-all" href="/verify">Check a certificate</a>
+          </div>
           <div class="certified-grid">
             ${certified
-              .map(
-                (r) => `<a class="certified-card" href="/r/${esc(r.id)}">
-                  <span class="certified-name">${esc(r.device_name)}</span>
-                  <span class="certified-meta">
-                    <span class="${r.verdict === "Pass" ? "certified-pass" : "certified-fail"}">${esc(r.verdict)}</span>
-                    <span>${
-                      r.fingerprint_vram_total_bytes > 0
-                        ? Math.round((r.vram_bytes_tested / r.fingerprint_vram_total_bytes) * 100)
-                        : 0
-                    }% of memory tested</span>
+              .map((r) => {
+                const passed = r.verdict === "Pass";
+                const coverage =
+                  r.fingerprint_vram_total_bytes > 0
+                    ? Math.round((r.vram_bytes_tested / r.fingerprint_vram_total_bytes) * 100)
+                    : 0;
+                return `<a class="certified-card" href="/r/${esc(r.id)}">
+                  <span class="certified-top">
+                    <span class="certified-verdict ${passed ? "is-pass" : "is-fail"}">${passed ? "Passed" : "Failed"}</span>
+                    <span class="certified-when">${esc(timeAgo(r.created_at))}</span>
                   </span>
-                </a>`
-              )
+                  <span class="certified-name">${esc(r.device_name)}</span>
+                  <span class="certified-meta">${coverage}% of memory tested${
+                    r.vram_total_errors > 0 ? `, ${r.vram_total_errors} errors` : ", no errors"
+                  }</span>
+                </a>`;
+              })
               .join("")}
           </div>
-          <p class="footer-note">One per model, most recent first. Open any of them: a certificate is public and needs no account to read.</p>
         </section>`;
 
   return sitePage({
@@ -205,6 +238,8 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
       </div>
       <p class="beta-note"><b>Early access.</b> The tool is new and free to use. Windows only, NVIDIA or AMD. It is unsigned, so Windows will warn you on first run: choose More info, then Run anyway. If anything breaks or a result looks wrong, <a href="/feedback">tell me</a>, that is what this stage is for.</p>
     </section>
+
+    ${certifiedSection}
 
     <hr class="rule">
 
@@ -231,8 +266,6 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
       <p class="footer-note">Alongside the three tests, the run records what the card will tell it about its own condition: junction and memory temperature where available, fan speed against the speed the driver asked for, and PCIe link width. A junction far above the edge sensor means heat is not reaching the cooler, memory at its throttling point means worn thermal pads, and a fan being asked to spin that is not turning is a fan that has failed. Link width is reported rather than failed, because it describes the slot the card is sitting in, not the card.</p>
       <p class="footer-note">Any test aborts on its own if the GPU crosses 105&nbsp;°C at the junction, or 100&nbsp;°C where no junction sensor exists, and an aborted run is reported as a finding rather than thrown away.</p>
     </section>
-
-    ${certifiedSection}
 
     <hr class="rule">
 
