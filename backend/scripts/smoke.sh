@@ -200,6 +200,12 @@ check "a model appears once, not once per run" \
 # photography has no source: Wikidata has no picture for an RTX 3070 and no
 # entry at all for an RX 9060 XT.
 check "each card carries a generated mark" "$(has "$HOMEPAGE" 'class="die-mark"')"
+# The photo route is a file read, so the only thing worth testing is that it
+# cannot be pointed anywhere else.
+check "the card image route refuses path traversal" \
+  "$([ "$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:3111/cards/..%2F..%2Fpackage.json')" != "200" ] && echo 1 || echo 0)"
+check "and refuses anything that is not an image name" \
+  "$([ "$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:3111/cards/app.ts')" = "404" ] && echo 1 || echo 0)"
 # Same card, same mark, or it is decoration rather than identity.
 check "the mark is derived from the fingerprint, not random" \
   "$([ "$(curl -s http://localhost:3111/ | grep -o '<svg class="die-mark".*</svg>' | head -1 | md5sum)" = "$(curl -s http://localhost:3111/ | grep -o '<svg class="die-mark".*</svg>' | head -1 | md5sum)" ] && echo 1 || echo 0)"

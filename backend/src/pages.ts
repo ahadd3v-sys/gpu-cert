@@ -8,6 +8,7 @@
 // account only buys you a place where your certificates are collected.
 import { esc } from "./html.js";
 import { sitePage, renderDieMark } from "./theme.js";
+import { cardImage } from "./card-art.js";
 import type { ReportRow, ViewStats } from "../lib/db.js";
 
 const REPO_URL = "https://github.com/ahadd3v-sys/gpu-cert";
@@ -85,7 +86,9 @@ const HOME_CSS = `
                     padding: 12px 14px; border: 1px solid var(--paper-deep);
                     text-decoration: none; color: var(--ink); background: var(--paper); }
   /* Spans both rows of the tile so the text column sits beside it. */
-  .die-mark { grid-row: 1 / span 3; width: 40px; height: 40px; color: var(--ink-muted); }
+  .die-mark, .card-photo { grid-row: 1 / span 3; width: 40px; height: 40px; }
+  .die-mark { color: var(--ink-muted); }
+  .card-photo { object-fit: contain; }
   .certified-card:hover .die-mark { color: var(--mark); }
   .certified-card:hover { border-color: var(--ink-muted); }
   .certified-card > .certified-top,
@@ -215,8 +218,13 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
                   r.fingerprint_vram_total_bytes > 0
                     ? Math.round((r.vram_bytes_tested / r.fingerprint_vram_total_bytes) * 100)
                     : 0;
+                const photo = cardImage(r.device_name);
                 return `<a class="certified-card" href="/r/${esc(r.id)}">
-                  ${renderDieMark(r.fingerprint_hash)}
+                  ${
+                    photo
+                      ? `<img class="card-photo" src="${esc(photo)}" alt="" loading="lazy" width="40" height="40">`
+                      : renderDieMark(r.fingerprint_hash)
+                  }
                   <span class="certified-top">
                     <span class="certified-verdict ${passed ? "is-pass" : "is-fail"}">${passed ? "Passed" : "Failed"}</span>
                     <span class="certified-when">${esc(timeAgo(r.created_at))}</span>

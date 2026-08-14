@@ -664,6 +664,32 @@ app.get("/verify/:reference", (c) => handleVerify(c, c.req.param("reference")));
 // only by this server, which is what makes "independently verifiable" mean
 // something. Served as text/plain so a browser shows it rather than
 // downloading it.
+// Card photographs, read from disk at request time.
+//
+// Everything else this site serves is generated, so there was no static file
+// route until now. Kept deliberately narrow: one directory, one extension set,
+// and a name that cannot escape it. A path traversal here would turn a picture
+// route into a file-read primitive against the deployment.
+app.get("/cards/:file", async (c) => {
+  const file = c.req.param("file");
+  if (!/^[a-z0-9-]+\.(png|jpg|webp)$/.test(file)) return c.notFound();
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const dir = fileURLToPath(new URL("../public/cards/", import.meta.url));
+    const bytes = await readFile(dir + file);
+    const type = file.endsWith(".png") ? "image/png" : file.endsWith(".webp") ? "image/webp" : "image/jpeg";
+    return c.body(bytes, 200, {
+      "content-type": type,
+      // Immutable in practice: a card's photograph does not change, and a new
+      // one would arrive under a new name.
+      "cache-control": "public, max-age=31536000, immutable",
+    });
+  } catch {
+    return c.notFound();
+  }
+});
+
 app.get("/.well-known/gpu-cert-key.pem", (c) => {
   const pem = process.env.CERT_SIGNING_PUBLIC_KEY;
   if (!pem) return c.text("signing key not configured", 500);
