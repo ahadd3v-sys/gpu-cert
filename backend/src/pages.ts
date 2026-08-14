@@ -7,7 +7,7 @@
 // this site may imply signing up is a prerequisite to testing a card, the
 // account only buys you a place where your certificates are collected.
 import { esc } from "./html.js";
-import { sitePage } from "./theme.js";
+import { sitePage, renderDieMark } from "./theme.js";
 import type { ReportRow, ViewStats } from "../lib/db.js";
 
 const REPO_URL = "https://github.com/ahadd3v-sys/gpu-cert";
@@ -81,15 +81,22 @@ const HOME_CSS = `
   .certified-all { font-size: 12px; color: var(--ink-muted); }
   .certified-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; margin-top: 12px; }
   /* A tile, not a photograph. See renderHome for why there are no images. */
-  .certified-card { display: block; padding: 12px 14px; border: 1px solid var(--paper-deep);
+  .certified-card { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start;
+                    padding: 12px 14px; border: 1px solid var(--paper-deep);
                     text-decoration: none; color: var(--ink); background: var(--paper); }
+  /* Spans both rows of the tile so the text column sits beside it. */
+  .die-mark { grid-row: 1 / span 3; width: 40px; height: 40px; color: var(--ink-muted); }
+  .certified-card:hover .die-mark { color: var(--mark); }
   .certified-card:hover { border-color: var(--ink-muted); }
+  .certified-card > .certified-top,
+  .certified-card > .certified-name,
+  .certified-card > .certified-meta { grid-column: 2; }
   .certified-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .certified-verdict { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
   .certified-verdict.is-pass { color: var(--pass); }
   .certified-verdict.is-fail { color: var(--fail); }
   .certified-when { font-size: 11px; color: var(--ink-muted); }
-  .certified-name { display: block; margin-top: 6px; font-family: "Space Grotesk", sans-serif;
+  .certified-name { display: block; margin-top: 4px; font-family: "Space Grotesk", sans-serif;
                     font-weight: 600; font-size: 14px; line-height: 1.3; }
   .certified-meta { display: block; margin-top: 3px; font-size: 11.5px; color: var(--ink-muted); }
 
@@ -209,6 +216,7 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
                     ? Math.round((r.vram_bytes_tested / r.fingerprint_vram_total_bytes) * 100)
                     : 0;
                 return `<a class="certified-card" href="/r/${esc(r.id)}">
+                  ${renderDieMark(r.fingerprint_hash)}
                   <span class="certified-top">
                     <span class="certified-verdict ${passed ? "is-pass" : "is-fail"}">${passed ? "Passed" : "Failed"}</span>
                     <span class="certified-when">${esc(timeAgo(r.created_at))}</span>

@@ -196,9 +196,14 @@ check "it sits above the how-it-works section" \
 check "each tile links to a real certificate" "$(has "$HOMEPAGE" 'class="certified-card" href="/r/')"
 check "a model appears once, not once per run" \
   "$([ "$(grep -o 'AMD Radeon RX 6600' <<<"$HOMEPAGE" | wc -l)" -le 1 ] && echo 1 || echo 0)"
-# Product photography would need a source keyed by model name that stays
-# current as new cards ship. There isn't one, so there are no images.
-check "no external image requests on the front page" \
+# Every card gets a mark generated from its own fingerprint, because product
+# photography has no source: Wikidata has no picture for an RTX 3070 and no
+# entry at all for an RX 9060 XT.
+check "each card carries a generated mark" "$(has "$HOMEPAGE" 'class="die-mark"')"
+# Same card, same mark, or it is decoration rather than identity.
+check "the mark is derived from the fingerprint, not random" \
+  "$([ "$(curl -s http://localhost:3111/ | grep -o '<svg class="die-mark".*</svg>' | head -1 | md5sum)" = "$(curl -s http://localhost:3111/ | grep -o '<svg class="die-mark".*</svg>' | head -1 | md5sum)" ] && echo 1 || echo 0)"
+check "and nothing is fetched from another host" \
   "$(grep -qE '<img|background-image' <<<"$HOMEPAGE" && echo 0 || echo 1)"
 
 check "the changes page renders" "$(has "$(curl -s http://localhost:3111/changes)" "Changes")"

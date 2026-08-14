@@ -163,6 +163,55 @@ export function renderEmblem(): string {
   </svg>`;
 }
 
+/// A die mark generated from a card's fingerprint. Same card, same mark,
+/// forever; different cards, different marks.
+///
+/// This is the answer to wanting images without having any. Product photography
+/// does not survive the problem: Wikidata has no picture for an RTX 3070 and no
+/// entry at all for an RX 9060 XT, there is no source keyed by model name that
+/// stays current as cards ship, board partners' versions of one chip look
+/// nothing alike, and hotlinking someone's shots is a licensing question that
+/// also makes the front page depend on a third-party request.
+///
+/// A mark derived from the fingerprint has none of those problems. It needs no
+/// network, no lookup table, and no maintenance, it works for cards that do not
+/// exist yet, and it is the same hexagonal die already used as the site's
+/// emblem rather than a second visual idea.
+///
+/// Mirrored down the middle on purpose. An unmirrored grid of random cells
+/// reads as noise; a symmetric one reads as a mark somebody designed, which is
+/// the same trick identicons use.
+export function renderDieMark(fingerprintHash: string): string {
+  const GRID = 8;
+  const HALF = GRID / 2;
+  // The hash is hex text. Two characters give a byte, and the fingerprint is
+  // long enough to fill the half-grid several times over.
+  const bytes: number[] = [];
+  for (let i = 0; i + 1 < fingerprintHash.length && bytes.length < HALF * GRID; i += 2) {
+    const b = Number.parseInt(fingerprintHash.slice(i, i + 2), 16);
+    bytes.push(Number.isFinite(b) ? b : 0);
+  }
+  while (bytes.length < HALF * GRID) bytes.push(0);
+
+  const cells: string[] = [];
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < HALF; x++) {
+      // Two bits per cell so roughly a third are filled: a half-filled grid
+      // looks muddy at this size.
+      const on = (bytes[y * HALF + x] & 0b11) === 0b11;
+      if (!on) continue;
+      for (const cx of [x, GRID - 1 - x]) {
+        cells.push(`<rect x="${cx * 4 + 4}" y="${y * 4 + 4}" width="4" height="4"/>`);
+      }
+    }
+  }
+
+  return `<svg class="die-mark" viewBox="0 0 40 40" aria-hidden="true">
+    <polygon points="20,1 37,10.5 37,29.5 20,39 3,29.5 3,10.5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.45"/>
+    <g fill="currentColor" opacity="0.75">${cells.join("")}</g>
+  </svg>`;
+}
+
 // Base stylesheet for the non-certificate pages. The certificate keeps its own
 // sheet, it's a fixed-shape document with layout rules that would only be
 // dead weight here.
