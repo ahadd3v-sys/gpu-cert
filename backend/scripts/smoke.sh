@@ -226,6 +226,11 @@ curl -s -o /dev/null -X POST http://localhost:3111/feedback \
   --data-urlencode "message=The VRAM test only covered half my card" \
   --data-urlencode "console_output=testing 4032 MB of 8176 MB VRAM (49%)"
 check "feedback is stored" "$([ "$(kit count feedback)" = "1" ] && echo 1 || echo 0)"
+# Counted is not read. The form wrote to a table nothing surfaced for a day,
+# which is worse than having no form: whoever filled it in believed they had
+# told someone.
+check "and can be read back, not just counted" \
+  "$(kit feedback-latest | grep -qi "only covered half my card" && echo 1 || echo 0)"
 curl -s -o /dev/null -X POST http://localhost:3111/feedback \
   --data-urlencode "message=this is spam from a bot filling every field" \
   --data-urlencode "website=http://spam.example"

@@ -596,6 +596,16 @@ export async function adminRecentSessions(limit = 40): Promise<Record<string, un
   return res.rows as unknown as Record<string, unknown>[];
 }
 
+export async function adminFeedback(limit = 50): Promise<Record<string, unknown>[]> {
+  await ensureSchema();
+  const res = await db().execute({
+    sql: `SELECT id, created_at, message, contact, report_reference, console_output
+          FROM feedback ORDER BY created_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  return res.rows as unknown as Record<string, unknown>[];
+}
+
 export async function adminSessionDetail(id: string): Promise<Record<string, unknown> | null> {
   await ensureSchema();
   const res = await db().execute({

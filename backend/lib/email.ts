@@ -97,3 +97,23 @@ export function passwordResetEmail(baseUrl: string, token: string): Omit<Outgoin
     ].join("\n"),
   };
 }
+
+
+/// Tells the maintainer a report came in, because otherwise nothing does.
+///
+/// The feedback form existed for a day before anyone noticed that submissions
+/// landed in a table nobody read: no email, and the admin page showed only a
+/// count. A form that silently swallows bug reports is worse than no form,
+/// because the person who filled it in believes they have told you something.
+export function feedbackNotification(
+  baseUrl: string,
+  opts: { message: string; contact?: string | null; reference?: string | null }
+): Omit<OutgoingEmail, "to"> {
+  const from = opts.contact?.trim() || "no contact given";
+  const ref = opts.reference?.trim() ? `\nCertificate: ${opts.reference.trim()}` : "";
+  return {
+    subject: `GPU Cert feedback from ${from}`,
+    // Deliberately plain. This is a notification to one person, not a document.
+    body: `${opts.message}\n\nFrom: ${from}${ref}\n\nAll submissions: ${baseUrl}/admin`,
+  };
+}

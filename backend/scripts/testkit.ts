@@ -53,6 +53,15 @@ switch (command) {
     process.stdout.write(String(res.rows[0].n));
     break;
   }
+  // Proves a submission can be read back, not merely counted. The feedback
+  // form spent a day writing to a table that nothing surfaced.
+  case "feedback-latest": {
+    const res = await db.execute(
+      `SELECT message FROM feedback ORDER BY created_at DESC LIMIT 1`
+    );
+    process.stdout.write(String(res.rows[0]?.message ?? ""));
+    break;
+  }
   case "tamper": {
     // args: reportId, column, value
     const [id, column, value] = args;

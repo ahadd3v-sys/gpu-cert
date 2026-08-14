@@ -29,6 +29,7 @@ import {
   adminRecentReports,
   adminRecentSessions,
   adminSessionDetail,
+  adminFeedback,
   consumeTestSession,
   countRecentSessions,
   createFeedback,
@@ -52,7 +53,7 @@ import {
   canonicalReportStringFromRow,
 } from "../lib/certify.js";
 import { checkSubmission, checkCertifiableRun } from "../lib/attestation.js";
-import { isEmailConfigured, sendEmail, verificationEmail, passwordResetEmail } from "../lib/email.js";
+import { isEmailConfigured, sendEmail, verificationEmail, passwordResetEmail, feedbackNotification } from "../lib/email.js";
 import { signReport, verifyReportSignature } from "../lib/signing.js";
 import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/password.js";
 import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
@@ -587,13 +588,14 @@ app.get("/admin", async (c) => {
   if (!gate.ok) return gate.response;
 
   const sessionId = c.req.query("session");
-  const [overview, reports, sessions, detail] = await Promise.all([
+  const [overview, reports, sessions, detail, feedback] = await Promise.all([
     adminOverview(),
     adminRecentReports(),
     adminRecentSessions(),
     sessionId ? adminSessionDetail(sessionId) : Promise.resolve(null),
+    adminFeedback(),
   ]);
-  return c.html(renderAdmin({ overview, reports, sessions, detail }));
+  return c.html(renderAdmin({ overview, reports, sessions, detail, feedback }));
 });
 
 // The certificate's whole value to a buyer is that they don't have to take
@@ -721,6 +723,25 @@ app.post("/feedback", async (c) => {
     consoleOutput: trim(form.console_output, 20000),
     ipHash,
   });
+
+  // Best effort, and deliberately after the row is written: the submission is
+  // safe in the database either way, and a mail outage must never turn someone
+  // reporting a bug into an error page.
+  const notify = adminEmails()[0];
+  if (notify && isEmailConfigured()) {
+    try {
+      await sendEmail({
+        to: notify,
+        ...feedbackNotification(BASE_URL, {
+          message: message.slice(0, 4000),
+          contact: trim(form.contact, 254),
+          reference: trim(form.report_reference, 64),
+        }),
+      });
+    } catch {
+      // Already stored, and visible on /admin. Nothing to recover here.
+    }
+  }
 
   return c.redirect("/feedback?sent=1");
 });

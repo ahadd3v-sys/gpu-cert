@@ -872,6 +872,7 @@ export function renderAdmin(opts: {
   reports: Record<string, unknown>[];
   sessions: Record<string, unknown>[];
   detail: Record<string, unknown> | null;
+  feedback: Record<string, unknown>[];
 }): string {
   const n = (v: unknown) => Number(v ?? 0);
   const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
@@ -953,6 +954,9 @@ export function renderAdmin(opts: {
               line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 460px; }
       /* Wide tables scroll rather than pushing the page sideways. */
       .scroller { overflow-x: auto; }
+      .feedback-item { border: 1px solid var(--paper-deep); padding: 12px 14px; margin-bottom: 10px; }
+      .feedback-meta { font-size: 11.5px; color: var(--ink-muted); margin: 0 0 6px; }
+      .feedback-message { margin: 0; white-space: pre-wrap; }
     `,
     body: `
       <h1>Admin</h1>
@@ -971,6 +975,26 @@ export function renderAdmin(opts: {
       </div>
 
       ${detail}
+
+      <section class="sheet-section">
+        <h2>Feedback</h2>
+        <p class="section-note">Submissions from the feedback form. Nothing else surfaces these, so this is the only place they are read.</p>
+        ${
+          opts.feedback.length === 0
+            ? `<p class="section-note">Nothing submitted yet.</p>`
+            : opts.feedback
+                .map(
+                  (f) => `<article class="feedback-item">
+                    <p class="feedback-meta">${esc(String(f.created_at).slice(0, 16))}${
+                      f.contact ? ` &middot; ${esc(String(f.contact))}` : " &middot; no contact given"
+                    }${f.report_reference ? ` &middot; ${esc(String(f.report_reference))}` : ""}</p>
+                    <p class="feedback-message">${esc(String(f.message))}</p>
+                    ${f.console_output ? `<pre class="dump">${esc(String(f.console_output))}</pre>` : ""}
+                  </article>`
+                )
+                .join("")
+        }
+      </section>
 
       <section class="sheet-section">
         <h2>Runs</h2>
