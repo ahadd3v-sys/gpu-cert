@@ -10,6 +10,11 @@ import type { TelemetrySample } from "./certify.js";
 // has no real GPU to calibrate against. Revisit once there's telemetry from
 // an actual Windows/GPU test run.
 export interface StressAssessment {
+  /// Null when the card does not expose the sensor. Never defaulted to a
+  /// flattering number, since absent and healthy are different things.
+  peakHotspotC?: number | null;
+  peakMemoryC?: number | null;
+  peakHotspotDeltaC?: number | null;
   peakTempC: number;
   thermallyStable: boolean;
   clockStabilityPct: number;
@@ -41,6 +46,34 @@ const CLOCK_DROP_FAIL_PCT = 35;
 /// the card hot is thermal throttling and worth reporting. Requiring both means
 /// a power-capped card can never fail this check on its cap alone.
 const CLOCK_DROP_NEEDS_TEMP_C = 80;
+
+/// Where the hotspot stops being a hot card and starts being a broken one.
+///
+/// AMD limits junction at roughly 110 C. Sitting at or above this under load is
+/// the card telling you it cannot move its own heat.
+const HOTSPOT_FAIL_C = 105;
+
+/// GDDR6 throttles around 105 C. Memory this hot under load points at thermal
+/// pads, which is the exact wear a card that ran continuously for years has,
+/// and memory is the part this product exists to certify.
+const MEMORY_TEMP_FAIL_C = 100;
+
+/// How far the hotspot may sit above the edge before it is worth reporting.
+///
+/// 25 to 35 C is normal on RDNA: a healthy RX 9070 XT reads about 50 C edge
+/// against 80 C hotspot. A larger gap means heat is not reaching the cooler,
+/// which is what dried paste or badly seated pads do, and defective RDNA 4
+/// cards were identified in the field on exactly this signature. Set well above
+/// the normal band because a false accusation is worse than a missed one.
+const HOTSPOT_DELTA_NOTE_C = 45;
+
+/// A fan the driver is asking to spin that is not spinning.
+///
+/// Bearings are the usual casualty of a card that ran for years without
+/// stopping. Below this many RPM against a meaningful commanded percentage, it
+/// is not turning.
+const FAN_STALLED_RPM = 200;
+const FAN_COMMANDED_PCT = 30;
 const CLOCK_INSTABILITY_FAIL_PCT = 8;
 const MIN_SAMPLES_FOR_ANALYSIS = 10;
 
@@ -135,6 +168,49 @@ export function assessStressTest(series: TelemetrySample[], durationMs: number):
         `GPU clock speed was unstable during the test (±${clockStabilityPct.toFixed(1)}% variation), consistent with a power delivery issue.`
       );
     }
+  }
+
+  // Everything below reads sensors that only some cards expose. Absent means
+  // unknown, and unknown is never a finding: a card that cannot report its
+  // hotspot must not be treated as though it reported a good one.
+  const hotspots = series.map((s) => s.hotspot_temperature_c).filter((v): v is number => v != null);
+  const peakHotspotC = hotspots.length > 0 ? Math.max(...hotspots) : null;
+  if (peakHotspotC !== null && peakHotspotC >= HOTSPOT_FAIL_C) {
+    reasons.push(
+      `GPU hotspot reached ${peakHotspotC}\u00b0C, at or above the junction limit these cards throttle at. The card cannot move its own heat away.`
+    );
+  }
+
+  // Compared per sample rather than peak against peak, because the two peaks
+  // can occur at different moments and subtracting them overstates the gap.
+  const deltas = series
+    .filter((s) => s.hotspot_temperature_c != null)
+    .map((s) => (s.hotspot_temperature_c as number) - s.temperature_c);
+  const peakDeltaC = deltas.length > 0 ? Math.max(...deltas) : null;
+  if (peakDeltaC !== null && peakDeltaC >= HOTSPOT_DELTA_NOTE_C && (peakHotspotC ?? 0) < HOTSPOT_FAIL_C) {
+    reasons.push(
+      `GPU hotspot ran up to ${peakDeltaC}\u00b0C above the edge sensor, well beyond the usual 25 to 35\u00b0C. A gap this size means heat is not reaching the cooler, which is what dried thermal paste or poorly seated pads do.`
+    );
+  }
+
+  const memTemps = series.map((s) => s.memory_temperature_c).filter((v): v is number => v != null);
+  const peakMemoryC = memTemps.length > 0 ? Math.max(...memTemps) : null;
+  if (peakMemoryC !== null && peakMemoryC >= MEMORY_TEMP_FAIL_C) {
+    reasons.push(
+      `Memory reached ${peakMemoryC}\u00b0C under load, at the point GDDR6 begins throttling. This usually means the memory thermal pads are worn.`
+    );
+  }
+
+  // Only counted once the run is properly underway: a fan legitimately sits
+  // still for the first seconds of a load while the card is still cool.
+  const settled = inWindow(series, durationMs, 0.3, 1.0);
+  const stalled = settled.filter(
+    (s) => s.fan_percent != null && s.fan_rpm != null && s.fan_percent >= FAN_COMMANDED_PCT && s.fan_rpm < FAN_STALLED_RPM
+  );
+  if (settled.length >= MIN_SAMPLES_FOR_ANALYSIS && stalled.length > settled.length / 2) {
+    reasons.push(
+      `The cooling fan was being asked for ${Math.max(...stalled.map((s) => s.fan_percent as number))}% and did not turn. A seized or failed fan is the most common wear on a card that ran continuously.`
+    );
   }
 
   return { peakTempC, thermallyStable, clockStabilityPct, reasons };

@@ -17,6 +17,17 @@ use crate::vulkan::vram_test::VramTestResult;
 pub struct TelemetrySample {
     pub elapsed_ms: u64,
     pub temperature_c: u32,
+    /// Junction temperature where the card throttles, and the memory junction.
+    /// Skipped in the payload when absent so a backend that has not shipped
+    /// support for them still parses a report unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hotspot_temperature_c: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_temperature_c: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fan_rpm: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fan_percent: Option<u32>,
     pub power_draw_mw: u32,
     pub graphics_clock_mhz: u32,
     pub memory_clock_mhz: u32,
@@ -309,6 +320,10 @@ pub fn sample_from_telemetry(elapsed: Duration, t: &GpuTelemetry) -> TelemetrySa
     TelemetrySample {
         elapsed_ms: elapsed.as_millis() as u64,
         temperature_c: t.temperature_c,
+        hotspot_temperature_c: t.hotspot_temperature_c,
+        memory_temperature_c: t.memory_temperature_c,
+        fan_rpm: t.fan_rpm,
+        fan_percent: t.fan_percent,
         power_draw_mw: t.power_draw_mw,
         graphics_clock_mhz: t.graphics_clock_mhz,
         memory_clock_mhz: t.memory_clock_mhz,

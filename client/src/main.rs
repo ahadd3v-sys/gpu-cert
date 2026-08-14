@@ -329,10 +329,10 @@ fn run() -> anyhow::Result<()> {
                         sample.memory_clock_mhz,
                     ),
                 );
-                let unsafe_temp = safety::is_temp_unsafe(sample.temperature_c);
+                let unsafe_temp = safety::is_unsafe(sample.temperature_c, sample.hotspot_temperature_c);
                 telemetry_series.push(sample);
                 if unsafe_temp {
-                    screen.notice(&abort_warning(sample_telemetry.temperature_c));
+                    screen.notice(&abort_warning(sample_telemetry.temperature_c, sample_telemetry.hotspot_temperature_c));
                 }
                 !unsafe_temp
             }
@@ -370,9 +370,9 @@ fn run() -> anyhow::Result<()> {
             session.heartbeat();
             match gpu.read_primary_gpu() {
                 Ok(t) => {
-                    let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
+                    let unsafe_temp = safety::is_unsafe(t.temperature_c, t.hotspot_temperature_c);
                     if unsafe_temp {
-                        screen.notice(&abort_warning(t.temperature_c));
+                        screen.notice(&abort_warning(t.temperature_c, t.hotspot_temperature_c));
                     }
                     !unsafe_temp
                 }
@@ -407,9 +407,9 @@ fn run() -> anyhow::Result<()> {
         session.heartbeat();
         match gpu.read_primary_gpu() {
             Ok(t) => {
-                let unsafe_temp = safety::is_temp_unsafe(t.temperature_c);
+                let unsafe_temp = safety::is_unsafe(t.temperature_c, t.hotspot_temperature_c);
                 if unsafe_temp {
-                    screen.notice(&abort_warning(t.temperature_c));
+                    screen.notice(&abort_warning(t.temperature_c, t.hotspot_temperature_c));
                 }
                 !unsafe_temp
             }
@@ -488,13 +488,25 @@ fn run() -> anyhow::Result<()> {
 /// see safety.rs. Aborting is still followed by a normal report submission: an
 /// early stop for an unsafe temperature is itself a meaningful, certifiable
 /// finding, not a run to just discard.
-fn abort_warning(temp_c: u32) -> String {
-    format!(
-        "Stopping this test: the GPU reached {temp_c}{deg}C, at or above the {}{deg}C safety \
-         limit. Continuing to load the card at this temperature is not safe.",
-        safety::SAFETY_ABORT_TEMP_C,
-        deg = ui::degree()
-    )
+fn abort_warning(edge_c: u32, hotspot_c: Option<u32>) -> String {
+    // Names which sensor tripped. "Your GPU hit 105C" is confusing on a card
+    // whose displayed temperature says 78, and the difference is the whole
+    // reason the hotspot is watched separately.
+    match hotspot_c.filter(|h| *h >= safety::SAFETY_ABORT_HOTSPOT_C) {
+        Some(h) => format!(
+            "Stopping this test: the GPU hotspot reached {h}{deg}C, at or above the {}{deg}C \
+             limit, with the edge sensor reading {edge_c}{deg}C. The hotspot is where the card \
+             throttles, so this is the number that matters.",
+            safety::SAFETY_ABORT_HOTSPOT_C,
+            deg = ui::degree()
+        ),
+        None => format!(
+            "Stopping this test: the GPU reached {edge_c}{deg}C, at or above the {}{deg}C safety \
+             limit. Continuing to load the card at this temperature is not safe.",
+            safety::SAFETY_ABORT_TEMP_C,
+            deg = ui::degree()
+        ),
+    }
 }
 
 /// Opens the report page so the seller lands back on the site to see (and,

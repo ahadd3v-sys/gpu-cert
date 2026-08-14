@@ -7,6 +7,13 @@ import type { ReportRow } from "./db.js";
 export const TelemetrySampleSchema = z.object({
   elapsed_ms: z.number().int().nonnegative(),
   temperature_c: z.number().int(),
+  // Optional throughout: NVML exposes none of these, and a client released
+  // before they existed sends none of them either. Absent means unknown, which
+  // is treated as "no finding" rather than as a pass.
+  hotspot_temperature_c: z.number().int().optional(),
+  memory_temperature_c: z.number().int().optional(),
+  fan_rpm: z.number().int().nonnegative().optional(),
+  fan_percent: z.number().int().optional(),
   power_draw_mw: z.number().int().nonnegative(),
   graphics_clock_mhz: z.number().int().nonnegative(),
   memory_clock_mhz: z.number().int().nonnegative(),

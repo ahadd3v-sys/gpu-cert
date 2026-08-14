@@ -62,6 +62,25 @@ const PMLOG_CLK_MEMCLK: usize = 2;
 const PMLOG_TEMPERATURE_EDGE: usize = 8;
 const PMLOG_INFO_ACTIVITY_GFX: usize = 19;
 const PMLOG_ASIC_POWER: usize = 23;
+/// Total board power. RDNA 4 reports nothing through ASIC_POWER: an RX 9060 XT
+/// returned no power at all, which left the stress test with no way to show it
+/// had loaded the card, since utilization is not evidence of anything. Tried
+/// as a fallback rather than a replacement, because ASIC_POWER is what older
+/// cards answer on.
+const PMLOG_BOARD_POWER: usize = 73;
+/// Junction temperature, where the card actually throttles. AMD's limit is
+/// around 110 C and the hotspot runs 25 to 35 C above the edge on RDNA, so the
+/// edge sensor alone is the wrong thing to guard with. See safety.rs.
+const PMLOG_TEMPERATURE_HOTSPOT: usize = 27;
+/// Memory junction temperature. GDDR6 throttles around 105 C.
+const PMLOG_TEMPERATURE_MEM: usize = 9;
+/// Fan speed, as measured and as commanded. Read as a pair because neither is
+/// worth much alone: what identifies a worn or seized bearing is the driver
+/// asking for a substantial fan speed and the blades not turning. Fans are the
+/// usual casualty of a card that ran continuously for years, and this is the
+/// only part of that wear a program can see.
+const PMLOG_FAN_RPM: usize = 14;
+const PMLOG_FAN_PERCENTAGE: usize = 15;
 const PMLOG_BUS_LANES: usize = 41;
 
 type AdlContextHandle = *mut c_void;
@@ -447,6 +466,22 @@ impl Adl {
                      without a working safety watchdog. Please report this (device: {name})."
                 )
             })?;
+            // Optional, and treated as absent rather than fatal when missing:
+            // a card that reports only an edge sensor should still be
+            // certifiable, just with a more conservative watchdog.
+            let plausible = |v: Option<i32>| v.filter(|t| (0..=150).contains(t)).map(|t| t as u32);
+            let hotspot_temperature_c = plausible(sensor(PMLOG_TEMPERATURE_HOTSPOT));
+            let memory_temperature_c = plausible(sensor(PMLOG_TEMPERATURE_MEM));
+            // All-or-nothing, like the PCIe widths: a commanded percentage with
+            // no measured RPM to compare it against says nothing, and reporting
+            // half the pair invites a conclusion the data cannot support.
+            let fan = match (sensor(PMLOG_FAN_RPM), sensor(PMLOG_FAN_PERCENTAGE)) {
+                (Some(rpm), Some(pct)) if (0..=10_000).contains(&rpm) && (0..=100).contains(&pct) => {
+                    Some((rpm as u32, pct as u32))
+                }
+                _ => None,
+            };
+
             if !(0..=150).contains(&temperature_c) {
                 anyhow::bail!(
                     "GPU temperature sensor returned an implausible reading ({temperature_c}°C), \
@@ -457,8 +492,17 @@ impl Adl {
             let graphics_clock_mhz = sensor(PMLOG_CLK_GFXCLK).unwrap_or(0).max(0) as u32;
             let memory_clock_mhz = sensor(PMLOG_CLK_MEMCLK).unwrap_or(0).max(0) as u32;
             let utilization_pct = sensor(PMLOG_INFO_ACTIVITY_GFX).unwrap_or(0).clamp(0, 100) as u32;
-            // ASIC_POWER is reported in whole watts; GpuTelemetry wants mW.
-            let power_draw_mw = (sensor(PMLOG_ASIC_POWER).unwrap_or(0).max(0) as u32).saturating_mul(1000);
+            // Reported in whole watts; GpuTelemetry wants mW. BOARD_POWER is
+            // tried second because RDNA 4 answers on it and returns nothing at
+            // all through ASIC_POWER, which left an RX 9060 XT run with no
+            // power figure and therefore no evidence the stress test had done
+            // anything.
+            let power_w = sensor(PMLOG_ASIC_POWER)
+                .filter(|w| *w > 0)
+                .or_else(|| sensor(PMLOG_BOARD_POWER))
+                .unwrap_or(0)
+                .max(0) as u32;
+            let power_draw_mw = power_w.saturating_mul(1000);
             // See module docs: current == max is deliberate, not a bug.
             let pcie_lanes = sensor(PMLOG_BUS_LANES).unwrap_or(0).max(0) as u32;
 
@@ -475,6 +519,10 @@ impl Adl {
                 vbios_version,
                 vram_total_bytes: mem.memory_size.max(0) as u64,
                 temperature_c: temperature_c as u32,
+                hotspot_temperature_c,
+                memory_temperature_c,
+                fan_rpm: fan.map(|(rpm, _)| rpm),
+                fan_percent: fan.map(|(_, pct)| pct),
                 power_draw_mw,
                 graphics_clock_mhz,
                 memory_clock_mhz,

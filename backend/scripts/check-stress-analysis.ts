@@ -23,6 +23,10 @@ type Sample = {
   graphics_clock_mhz: number;
   memory_clock_mhz: number;
   utilization_pct: number;
+  hotspot_temperature_c?: number;
+  memory_temperature_c?: number;
+  fan_rpm?: number;
+  fan_percent?: number;
 };
 
 /// Temperature approaches its steady state rather than climbing linearly,
@@ -36,6 +40,11 @@ function series(opts: {
   startTemp: number;
   steadyTemp: number;
   jitter?: number;
+  /// How far the hotspot sits above the edge. 30 is a healthy RDNA card.
+  hotspotDelta?: number;
+  memTemp?: number;
+  fanRpm?: number;
+  fanPercent?: number;
 }): Sample[] {
   const n = 300;
   const out: Sample[] = [];
@@ -56,6 +65,15 @@ function series(opts: {
       ),
       memory_clock_mhz: 1750,
       utilization_pct: 99,
+      ...(opts.hotspotDelta != null
+        ? {
+            hotspot_temperature_c:
+              Math.round(opts.startTemp + (opts.steadyTemp - opts.startTemp) * settle) + opts.hotspotDelta,
+          }
+        : {}),
+      ...(opts.memTemp != null ? { memory_temperature_c: opts.memTemp } : {}),
+      ...(opts.fanRpm != null ? { fan_rpm: opts.fanRpm } : {}),
+      ...(opts.fanPercent != null ? { fan_percent: opts.fanPercent } : {}),
     });
   }
   return out;
@@ -84,6 +102,69 @@ check("unstable clocks still fail while cool", jittery.reasons.some((r) => r.inc
 // A healthy card that barely moves must be clean.
 const healthy = assessStressTest(series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 45, steadyTemp: 68 }), D);
 check("a healthy card passes cleanly", healthy.reasons.length === 0, healthy.reasons.join("; "));
+
+// ------------------------------------------------- sensors only some cards have
+
+// A healthy RDNA delta. 30 C above edge is normal and must never be a finding.
+const normalDelta = assessStressTest(
+  series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 45, steadyTemp: 68, hotspotDelta: 30 }),
+  D
+);
+check("a normal 30C hotspot delta is not a finding", normalDelta.reasons.length === 0, normalDelta.reasons.join("; "));
+
+// The signature that identified defective RDNA 4 cards in the field: an
+// unremarkable edge with the junction far above it.
+// Edge deliberately low: when heat is not reaching the cooler it is not
+// reaching the edge sensor either, which is exactly why the edge alone looks
+// reassuring on these cards. 50 C edge with a 100 C junction, still under the
+// limit, so this tests the delta rule and not the junction one.
+const badContact = assessStressTest(
+  series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 35, steadyTemp: 50, hotspotDelta: 50 }),
+  D
+);
+check(
+  "an abnormal hotspot delta is reported even when the edge looks fine",
+  badContact.reasons.some((r) => r.includes("not reaching the cooler")),
+  badContact.reasons.join("; ")
+);
+
+// Past the junction limit, which is the card failing to move its own heat.
+const cooking = assessStressTest(
+  series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 60, steadyTemp: 72, hotspotDelta: 38 }),
+  D
+);
+check("a hotspot past the junction limit fails", cooking.reasons.some((r) => r.includes("junction limit")), cooking.reasons.join("; "));
+
+// Memory hot enough to be throttling, on a card whose core looks fine. This is
+// the pad wear a mined card has, and memory is what this product certifies.
+const hotMemory = assessStressTest(
+  series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 45, steadyTemp: 62, memTemp: 102 }),
+  D
+);
+check("hot memory is reported even with a cool core", hotMemory.reasons.some((r) => r.includes("thermal pads")), hotMemory.reasons.join("; "));
+
+// A fan being asked for 60% that is not turning.
+const deadFan = assessStressTest(
+  series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 45, steadyTemp: 78, fanRpm: 0, fanPercent: 60 }),
+  D
+);
+check("a stalled fan is reported", deadFan.reasons.some((r) => r.includes("did not turn")), deadFan.reasons.join("; "));
+
+// A working fan must not be.
+const goodFan = assessStressTest(
+  series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 45, steadyTemp: 68, fanRpm: 1650, fanPercent: 60 }),
+  D
+);
+check("a spinning fan is not", goodFan.reasons.length === 0, goodFan.reasons.join("; "));
+
+// The rule that matters most: a card that cannot report these sensors is not
+// accused of anything. NVIDIA reports none of them.
+const noSensors = assessStressTest(
+  series({ durationMs: D, startClock: 1900, endClock: 1820, startTemp: 45, steadyTemp: 68 }),
+  D
+);
+check("a card that reports no extra sensors is not accused", noSensors.reasons.length === 0, noSensors.reasons.join("; "));
+check("and its unknown readings stay null rather than defaulting", noSensors.peakHotspotC == null && noSensors.peakMemoryC == null);
 
 if (failures > 0) {
   console.error(`\n${failures} stress-analysis check(s) failed`);

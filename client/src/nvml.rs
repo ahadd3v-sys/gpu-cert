@@ -134,7 +134,29 @@ pub struct GpuTelemetry {
     pub pci_vendor_id: u32,
     pub vbios_version: String,
     pub vram_total_bytes: u64,
+    /// Edge temperature: the sensor both vendors report as "the" GPU
+    /// temperature, and the coolest of the ones a card exposes.
     pub temperature_c: u32,
+    /// Junction temperature, where a card actually throttles. `None` when the
+    /// backend cannot read it, which is the case for NVML.
+    ///
+    /// Worth having for two reasons. It is the number AMD limits on, so it is
+    /// what a watchdog should watch. And the gap between it and the edge is a
+    /// finding in its own right: RDNA 4 cards with poor die contact were
+    /// identified in the field by an abnormal hotspot against a normal edge,
+    /// and degraded thermal interface is exactly what a hard-worked used card
+    /// has. See stress-analysis.ts.
+    pub hotspot_temperature_c: Option<u32>,
+    /// Memory junction temperature. Arguably the most relevant sensor this
+    /// product has, since the damage it exists to find is memory damage, and
+    /// hot VRAM is the tell.
+    pub memory_temperature_c: Option<u32>,
+    /// Measured fan speed and the speed the driver asked for. A card under
+    /// sustained load with a substantial commanded percentage and no rotation
+    /// has a failed fan, which is a defect a buyer would otherwise discover
+    /// the hard way.
+    pub fan_rpm: Option<u32>,
+    pub fan_percent: Option<u32>,
     pub power_draw_mw: u32,
     pub graphics_clock_mhz: u32,
     pub memory_clock_mhz: u32,
@@ -344,6 +366,19 @@ impl Nvml {
                 vbios_version,
                 vram_total_bytes: mem.total,
                 temperature_c: temp,
+                // NVML's public temperature API exposes only the GPU sensor.
+                // Hotspot and memory junction are readable through the
+                // undocumented field-value interface, which this deliberately
+                // does not touch: an unsupported field there is an easy way to
+                // read a plausible wrong number, and a wrong temperature is
+                // worse than an absent one when a watchdog depends on it.
+                hotspot_temperature_c: None,
+                memory_temperature_c: None,
+                // NVML exposes fan speed as a percentage only; RPM needs the
+                // same undocumented field interface as the extra temperatures,
+                // and the pair is worthless without both halves.
+                fan_rpm: None,
+                fan_percent: None,
                 power_draw_mw: power.unwrap_or(0),
                 graphics_clock_mhz: gfx_clock.unwrap_or(0),
                 memory_clock_mhz: mem_clock.unwrap_or(0),
