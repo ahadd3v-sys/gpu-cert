@@ -61,6 +61,8 @@ import { hashPassword, verifyPassword, burnPasswordVerification } from "../lib/p
 import { COOKIE_NAME, createSessionToken, getSessionUserId } from "../lib/auth.js";
 import { renderReportPage } from "./report-page.js";
 import { renderBadge } from "./badge.js";
+import { renderCertificateCard, renderSiteCard } from "./social-card.js";
+import { certificateNumber, SITE_ORIGIN } from "./theme.js";
 import { renderHome, renderLogin, renderSignup, renderDashboard, renderVerify, renderFeedback, renderNotice, renderForgotPassword, renderResetPassword, renderAdmin, renderChangelog } from "./pages.js";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://gpucert.com";
@@ -503,6 +505,57 @@ app.get("/r/:reportId/badge", async (c) => {
   return renderBadge(report);
 });
 
+/// The wide preview image, distinct from the badge above.
+///
+/// Deliberately NOT counted as a view. This is fetched by Discord's, Reddit's
+/// and Slack's unfurlers when the link is *posted*, not when a person looks at
+/// anything, so counting it would inflate every certificate the moment its
+/// owner pasted it anywhere.
+app.get("/r/:reportId/card.png", async (c) => {
+  const report = await getReportById(c.req.param("reportId"));
+  if (!report) return c.notFound();
+  return renderCertificateCard(report, certificateNumber(report.id));
+});
+
+app.get("/card.png", (c) => renderSiteCard());
+
+/// Nothing here is worth crawling except the public documents, and several
+/// paths actively should not be. Kept explicit rather than permissive because
+/// the certificate pages carry other people's hardware details.
+app.get("/robots.txt", (c) =>
+  c.text(
+    [
+      "User-agent: *",
+      "Allow: /$",
+      "Allow: /verify",
+      "Allow: /changes",
+      "Allow: /r/",
+      "Disallow: /admin",
+      "Disallow: /dashboard",
+      "Disallow: /login",
+      "Disallow: /signup",
+      "Disallow: /reset-password",
+      "Disallow: /forgot-password",
+      "Disallow: /verify-email",
+      "",
+      `Sitemap: ${SITE_ORIGIN}/sitemap.xml`,
+      "",
+    ].join("\n")
+  )
+);
+
+app.get("/sitemap.xml", async (c) => {
+  const pages = ["/", "/verify", "/changes", "/feedback"];
+  const body = pages
+    .map((p) => `  <url><loc>${SITE_ORIGIN}${p === "/" ? "" : p}/</loc></url>`)
+    .join("\n");
+  return c.body(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>\n`,
+    200,
+    { "content-type": "application/xml; charset=utf-8" }
+  );
+});
+
 app.post("/r/:reportId/claim", async (c) => {
   const userId = await getSessionUserId(c);
   if (!userId) return c.redirect(`/login?next=/r/${c.req.param("reportId")}`);
@@ -647,7 +700,7 @@ async function handleVerify(c: Context, reference: string | null) {
         reference,
         signatureValid,
         reportId: report.id,
-        certificateNumber: `GPUC-${report.id.slice(0, 8).toUpperCase()}`,
+        certificateNumber: certificateNumber(report.id),
         deviceName: report.device_name,
         fingerprintHash: report.fingerprint_hash,
         verdict: report.verdict,

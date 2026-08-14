@@ -368,7 +368,73 @@ interface PageOpts {
   css?: string;
   /** Sheet max-width. Narrow for the credential forms. */
   width?: number;
+  /**
+   * One sentence, used for both the meta description and the link preview.
+   *
+   * Worth more than it looks. This product travels by someone pasting a
+   * certificate URL into a listing or a trade channel, so the unfurled card is
+   * the first thing most buyers ever see of it. A page without one of these
+   * unfurls as a bare link, which reads as broken rather than as minimal.
+   */
+  description?: string;
+  /** Absolute path of this page, for the canonical URL and og:url. */
+  path?: string;
+  /** Absolute URL of the preview image. Falls back to the site card. */
+  image?: string;
+  /**
+   * Kept out of search results. Set on anything behind a login or holding
+   * someone's own data: there is nothing to rank and it should not be indexed.
+   */
+  noindex?: boolean;
   body: string;
+}
+
+/// Where the site answers from, for building the absolute URLs that Open Graph
+/// requires. Relative paths are silently dropped by most unfurlers.
+export const SITE_ORIGIN = process.env.PUBLIC_BASE_URL || "https://gpucert.com";
+
+/// The default sentence for pages that do not set their own.
+const SITE_DESCRIPTION =
+  "Run a fixed test protocol against a used GPU and get a signed certificate at a public URL, so a buyer can check the card themselves instead of taking the seller's word for it.";
+
+interface SocialOpts {
+  title: string;
+  description?: string;
+  path?: string;
+  image?: string;
+  noindex?: boolean;
+}
+
+/// Open Graph and Twitter both, because the two are read by different
+/// unfurlers and Discord, Reddit and WhatsApp do not agree on which.
+///
+/// Exported because the certificate page carries its own HTML shell rather
+/// than going through sitePage, and it is the page that most needs these.
+export function socialTags(opts: SocialOpts): string {
+  const description = opts.description ?? SITE_DESCRIPTION;
+  const url = opts.path ? `${SITE_ORIGIN}${opts.path}` : SITE_ORIGIN;
+  const image = opts.image ?? `${SITE_ORIGIN}/card.png`;
+  return [
+    `<meta name="description" content="${esc(description)}">`,
+    `<link rel="canonical" href="${esc(url)}">`,
+    opts.noindex ? `<meta name="robots" content="noindex">` : "",
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="${esc(SITE_NAME)}">`,
+    `<meta property="og:title" content="${esc(pageTitle(opts.title))}">`,
+    `<meta property="og:description" content="${esc(description)}">`,
+    `<meta property="og:url" content="${esc(url)}">`,
+    `<meta property="og:image" content="${esc(image)}">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
+    // summary_large_image, not summary: the card is a document and the wide
+    // crop is the only one that keeps the model name legible.
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${esc(pageTitle(opts.title))}">`,
+    `<meta name="twitter:description" content="${esc(description)}">`,
+    `<meta name="twitter:image" content="${esc(image)}">`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 // 1100, not 760. A certificate should read as a document rather than fill the
@@ -379,6 +445,16 @@ interface PageOpts {
 // actually use it instead of stretching line lengths.
 export const SITE_NAME = "GPU Cert";
 
+/// How a certificate is referred to anywhere outside its own URL: in the
+/// register, on the document, in the verify box, and on the preview card.
+///
+/// Lives here because it had drifted into four copies, three identical private
+/// functions plus one inlined template literal, and the day one of them changes
+/// shape is the day a certificate number stops matching itself across the site.
+export function certificateNumber(id: string): string {
+  return `GPUC-${id.slice(0, 8).toUpperCase()}`;
+}
+
 /// Every page ends with the site name so a tab is identifiable when the title
 /// is truncated to a few characters. The home page's own title is the site
 /// name, though, and blindly appending gave it "GPU Cert, GPU Cert".
@@ -387,13 +463,15 @@ export function pageTitle(title: string): string {
   return trimmed === "" || trimmed === SITE_NAME ? SITE_NAME : `${trimmed}, ${SITE_NAME}`;
 }
 
-export function sitePage({ title, nav = "", css = "", width = 1100, body }: PageOpts): string {
+export function sitePage(opts: PageOpts): string {
+  const { title, nav = "", css = "", width = 1100, body } = opts;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(pageTitle(title))}</title>
+${socialTags(opts)}
 ${FAVICON_LINK}
 ${THEME_SCRIPT}
 <style>${SITE_CSS}

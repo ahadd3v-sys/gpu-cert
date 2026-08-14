@@ -1,6 +1,15 @@
 import type { ReportRow } from "../lib/db.js";
 import { esc } from "./html.js";
-import { FONT_FACE_CSS, TOKENS_CSS, FAVICON_LINK, renderEmblem, pageTitle } from "./theme.js";
+import {
+  FONT_FACE_CSS,
+  TOKENS_CSS,
+  FAVICON_LINK,
+  renderEmblem,
+  pageTitle,
+  socialTags,
+  certificateNumber,
+  SITE_ORIGIN,
+} from "./theme.js";
 
 // Hand-written HTML string, not JSX. This is a single static-shaped page
 // with no interactivity beyond the claim form, and skipping JSX means
@@ -47,10 +56,6 @@ function formatTimestamp(iso: string): string {
     minute: "2-digit",
     timeZoneName: "short",
   });
-}
-
-function certificateNumber(id: string): string {
-  return `GPUC-${id.slice(0, 8).toUpperCase()}`;
 }
 
 // Circular stamp seal: an arc of ring text spanning 300° (leaving a 60° gap
@@ -206,6 +211,20 @@ export function renderReportPage(report: ReportRow, viewer: CertificateViewer): 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(pageTitle(report.device_name))}</title>
+${socialTags({
+  title: report.device_name,
+  // Written for someone reading an unfurl in a trade channel who has not seen
+  // this site before: what the document is, and that they can check it.
+  description: `${report.device_name}: ${
+    passed ? "passed" : "did not pass"
+  } the GPU Cert test protocol on ${new Date(report.created_at).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  })}. Signed certificate ${certificateNumber(report.id)}, verifiable by anyone.`,
+  path: `/r/${report.id}`,
+  image: `${SITE_ORIGIN}/r/${report.id}/card.png`,
+})}
 ${FAVICON_LINK}
 <style>
   ${FONT_FACE_CSS}

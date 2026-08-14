@@ -485,6 +485,46 @@ check "the dashboard reports the traffic" \
 check "a spent reset link cannot be reused" \
   "$(has "$(curl -s -X POST http://localhost:3111/reset-password --data-urlencode "token=$RTOK" --data-urlencode "password=another12345")" "expired or was already used")"
 
+# --- Link previews -----------------------------------------------------------
+# This product travels by someone pasting a certificate URL into a listing or a
+# trade channel, so the unfurled card is what most buyers see first. A missing
+# tag here is invisible on the site itself and only shows up as a dead-looking
+# link somewhere you cannot fix it.
+CERT_HTML=$(curl -s "http://localhost:3111/r/$PASS_ID")
+check "a certificate declares a preview image" \
+  "$(has "$CERT_HTML" "og:image")"
+check "the preview image is its own card, not the site card" \
+  "$(has "$CERT_HTML" "/r/$PASS_ID/card.png")"
+check "the preview url is absolute" \
+  "$(has "$CERT_HTML" 'og:url" content="http')"
+check "a certificate says what it is in one sentence" \
+  "$(has "$CERT_HTML" 'name="description"')"
+check "the certificate names the card in its preview" \
+  "$(has "$CERT_HTML" "og:title")"
+CARD_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3111/r/$PASS_ID/card.png")
+check "the certificate card image renders" "$([ "$CARD_CODE" = "200" ] && echo 1 || echo 0)"
+# Unfurlers fetch this when a link is posted, not when a person reads anything.
+VBEFORE=$(kit views "$PASS_ID" page)
+curl -s -o /dev/null "http://localhost:3111/r/$PASS_ID/card.png"
+check "an unfurl is not counted as someone viewing the certificate" \
+  "$([ "$(kit views "$PASS_ID" page)" = "$VBEFORE" ] && echo 1 || echo 0)"
+check "the site card renders" \
+  "$([ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3111/card.png)" = "200" ] && echo 1 || echo 0)"
+check "the home page carries a preview" \
+  "$(has "$(curl -s http://localhost:3111/)" "og:image")"
+# Pages holding someone's own data have nothing to rank and should not be indexed.
+check "the dashboard is kept out of search" \
+  "$(has "$(curl -s -b "$SCRATCH/owner" http://localhost:3111/dashboard)" 'name="robots" content="noindex"')"
+check "the login page is kept out of search" \
+  "$(has "$(curl -s http://localhost:3111/login)" 'name="robots" content="noindex"')"
+check "a certificate is not kept out of search" \
+  "$([ "$(has "$CERT_HTML" 'content="noindex"')" = "0" ] && echo 1 || echo 0)"
+ROBOTS=$(curl -s http://localhost:3111/robots.txt)
+check "robots.txt is served" "$(has "$ROBOTS" "User-agent")"
+check "robots.txt disallows the admin page" "$(has "$ROBOTS" "Disallow: /admin")"
+check "robots.txt points at the sitemap" "$(has "$ROBOTS" "Sitemap:")"
+check "a sitemap is served" "$(has "$(curl -s http://localhost:3111/sitemap.xml)" "<urlset")"
+
 echo ""
 echo "$pass passed, $fail failed"
 [ "$fail" = "0" ]

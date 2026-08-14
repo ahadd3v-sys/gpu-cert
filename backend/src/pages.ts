@@ -7,16 +7,12 @@
 // this site may imply signing up is a prerequisite to testing a card, the
 // account only buys you a place where your certificates are collected.
 import { esc } from "./html.js";
-import { sitePage, renderDieMark } from "./theme.js";
+import { sitePage, renderDieMark, certificateNumber } from "./theme.js";
 import { cardImage } from "./card-art.js";
 import type { ReportRow, ViewStats } from "../lib/db.js";
 
 const REPO_URL = "https://github.com/ahadd3v-sys/gpu-cert";
 const DOWNLOAD_URL = `${REPO_URL}/releases/latest/download/gpu-cert.exe`;
-
-function certificateNumber(id: string): string {
-  return `GPUC-${id.slice(0, 8).toUpperCase()}`;
-}
 
 function formatCount(n: number): string {
   return n.toLocaleString("en-US");
@@ -301,6 +297,7 @@ export function renderHome(loggedIn: boolean, certified: ReportRow[] = []): stri
 
   return sitePage({
     title: "GPU Cert",
+    path: "/",
     nav: loggedIn ? loggedInNav() : loggedOutNav(),
     css: HOME_CSS,
     body: `
@@ -408,6 +405,7 @@ function authPage(opts: {
   const minAttr = opts.minLength ? ` minlength="${opts.minLength}"` : "";
   return sitePage({
     title: opts.title,
+    noindex: true,
     width: 470,
     css: AUTH_CSS,
     body: `
@@ -652,6 +650,7 @@ export function renderDashboard(
 
   return sitePage({
     title: "My certificates",
+    noindex: true,
     nav: loggedInNav(),
     css: `${DASHBOARD_CSS}
       .traffic { display: grid; gap: 24px; align-items: start; }
@@ -800,6 +799,9 @@ export function renderVerify(opts: {
 
   return sitePage({
     title: "Verify a certificate",
+    description:
+      "Paste a certificate number or URL to check its Ed25519 signature against the issuing key. Anyone can verify a GPU Cert certificate without an account.",
+    path: "/verify",
     nav: opts.loggedIn ? loggedInNav() : loggedOutNav("/verify"),
     // Narrower than the content pages, since this is one short task, but wide
     // enough that the masthead nav stays on one line and the result labels
@@ -887,6 +889,8 @@ export function renderFeedback(opts: {
 }): string {
   return sitePage({
     title: "Feedback",
+    description: "Report a result that looks wrong, or a run that broke. Early access, so this is what the stage is for.",
+    path: "/feedback",
     nav: opts.loggedIn ? loggedInNav() : loggedOutNav("/feedback"),
     width: 720,
     css: FEEDBACK_CSS,
@@ -942,6 +946,7 @@ export function renderNotice(opts: {
 }): string {
   return sitePage({
     title: opts.title,
+    noindex: true,
     nav: opts.loggedIn ? loggedInNav() : loggedOutNav(),
     width: 620,
     css: NOTICE_CSS,
@@ -968,6 +973,7 @@ export function renderForgotPassword(opts: {
     : "";
   return sitePage({
     title: "Reset password",
+    noindex: true,
     nav: loggedOutNav(),
     width: 470,
     css: `${AUTH_CSS}
@@ -995,6 +1001,7 @@ export function renderForgotPassword(opts: {
 export function renderResetPassword(opts: { token: string; error?: string }): string {
   return sitePage({
     title: "Choose a new password",
+    noindex: true,
     nav: loggedOutNav(),
     width: 470,
     css: AUTH_CSS,
@@ -1165,6 +1172,7 @@ export function renderAdmin(opts: {
 
   return sitePage({
     title: "Admin",
+    noindex: true,
     nav: `<a href="/dashboard">Dashboard</a>`,
     width: 1240,
     css: `
@@ -1347,6 +1355,9 @@ export function renderChangelog(): string {
 
   return sitePage({
     title: "Changes",
+    description:
+      "What changed in each release of the GPU Cert client, including the releases that changed what a result means and why.",
+    path: "/changes",
     nav: `<a href="/verify">Verify</a><a href="/feedback">Feedback</a>`,
     width: 900,
     css: `
