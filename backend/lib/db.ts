@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { createClient, type Client } from "@libsql/client";
+import { compareVersions } from "./client-version.js";
 
 let client: Client | null = null;
 
@@ -594,6 +595,66 @@ export async function adminRecentSessions(limit = 40): Promise<Record<string, un
     args: [limit],
   });
   return res.rows as unknown as Record<string, unknown>[];
+}
+
+/// What the database actually costs, measured from the database rather than
+/// from a provider API.
+///
+/// No extra credentials by design. A Vercel or Turso platform token is scoped
+/// to create and destroy infrastructure, and putting one in the runtime
+/// environment so an admin page can render a number is a bad trade: it turns
+/// a read-only dashboard into a deployment credential sitting in a web
+/// process. Everything here comes from the database's own pages and columns.
+export async function adminStorage(): Promise<Record<string, number>> {
+  await ensureSchema();
+  const [pages, size, reports, sessions, views, recent] = await Promise.all([
+    db().execute(`PRAGMA page_count`),
+    db().execute(`PRAGMA page_size`),
+    db().execute(
+      `SELECT COUNT(*) n, COALESCE(SUM(LENGTH(stress_telemetry_series)), 0) telemetry FROM reports`
+    ),
+    db().execute(
+      `SELECT COUNT(*) n, COALESCE(SUM(LENGTH(COALESCE(run_log, ''))), 0) logs,
+              COALESCE(SUM(LENGTH(COALESCE(environment, ''))), 0) env FROM test_sessions`
+    ),
+    db().execute(`SELECT COUNT(*) n FROM report_views`),
+    // Telemetry per certificate fell by roughly fifty times when sampling moved
+    // from once per dispatch to once per second, so an all-time average
+    // describes a client nobody runs any more.
+    //
+    // "The last five reports" was the first attempt and was wrong for the same
+    // reason in miniature: one pre-change report in the window dragged the
+    // figure eight times too high. The versions come back with the sizes and
+    // are filtered by a real comparison in the caller, since string ordering
+    // gets 0.10 versus 0.9 wrong.
+    db().execute(
+      `SELECT client_version, LENGTH(stress_telemetry_series) bytes
+       FROM reports ORDER BY created_at DESC LIMIT 20`
+    ),
+  ]);
+  const num = (r: unknown) => Number(r ?? 0);
+  const pageCount = num((pages.rows[0] as Record<string, unknown>).page_count);
+  const pageSize = num((size.rows[0] as Record<string, unknown>).page_size);
+  const rep = reports.rows[0] as Record<string, unknown>;
+  const ses = sessions.rows[0] as Record<string, unknown>;
+  // Where per-dispatch sampling was replaced by once a second.
+  const SAMPLING_FIXED_IN = "0.6.0";
+  const current = (recent.rows as unknown as { client_version: string; bytes: number }[]).filter(
+    (r) => compareVersions(String(r.client_version), SAMPLING_FIXED_IN) >= 0
+  );
+  const avgCurrent =
+    current.length > 0 ? current.reduce((sum, r) => sum + Number(r.bytes), 0) / current.length : 0;
+  return {
+    bytes: pageCount * pageSize,
+    telemetryBytes: num(rep.telemetry),
+    logBytes: num(ses.logs),
+    environmentBytes: num(ses.env),
+    reports: num(rep.n),
+    sessions: num(ses.n),
+    views: num((views.rows[0] as Record<string, unknown>).n),
+    bytesPerRecentCertificate: Math.round(avgCurrent),
+    certificatesMeasured: current.length,
+  };
 }
 
 export async function adminFeedback(limit = 50): Promise<Record<string, unknown>[]> {

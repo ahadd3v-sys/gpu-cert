@@ -30,6 +30,7 @@ import {
   adminRecentSessions,
   adminSessionDetail,
   adminFeedback,
+  adminStorage,
   consumeTestSession,
   countRecentSessions,
   createFeedback,
@@ -588,14 +589,15 @@ app.get("/admin", async (c) => {
   if (!gate.ok) return gate.response;
 
   const sessionId = c.req.query("session");
-  const [overview, reports, sessions, detail, feedback] = await Promise.all([
+  const [overview, reports, sessions, detail, feedback, storage] = await Promise.all([
     adminOverview(),
     adminRecentReports(),
     adminRecentSessions(),
     sessionId ? adminSessionDetail(sessionId) : Promise.resolve(null),
     adminFeedback(),
+    adminStorage(),
   ]);
-  return c.html(renderAdmin({ overview, reports, sessions, detail, feedback }));
+  return c.html(renderAdmin({ overview, reports, sessions, detail, feedback, storage }));
 });
 
 // The certificate's whole value to a buyer is that they don't have to take

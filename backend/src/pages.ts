@@ -873,6 +873,7 @@ export function renderAdmin(opts: {
   sessions: Record<string, unknown>[];
   detail: Record<string, unknown> | null;
   feedback: Record<string, unknown>[];
+  storage: Record<string, number>;
 }): string {
   const n = (v: unknown) => Number(v ?? 0);
   const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
@@ -882,6 +883,50 @@ export function renderAdmin(opts: {
     `<div class="stat"><div class="stat-value">${esc(String(value))}</div>
        <div class="stat-label">${esc(label)}</div>
        ${note ? `<div class="stat-note">${esc(note)}</div>` : ""}</div>`;
+
+  // Free tier limits, stated here so the headroom below is a number rather
+  // than a feeling. Turso: 5 GB storage, 10 million row writes and 500 million
+  // row reads a month.
+  const TURSO_FREE_BYTES = 5 * 1024 ** 3;
+  const TURSO_FREE_WRITES_MONTHLY = 10_000_000;
+
+  const st = opts.storage;
+  const mb = (bytes: number) => (bytes / 1024 ** 2).toFixed(1);
+  const usedPct = (st.bytes / TURSO_FREE_BYTES) * 100;
+
+  // A run writes one session row, a heartbeat update roughly every minute for
+  // eleven minutes, one report, and a view or two. Writes are not the binding
+  // constraint at any plausible volume, but stating the arithmetic is what
+  // makes that claim checkable rather than reassuring.
+  const WRITES_PER_RUN = 1 + 11 + 1 + 2;
+  const runsPerMonthBeforeWriteLimit = Math.floor(TURSO_FREE_WRITES_MONTHLY / WRITES_PER_RUN);
+
+  // Sized on recent certificates, not the all-time average: telemetry per
+  // report fell by roughly fifty times when sampling moved to once a second,
+  // so the historical figure describes a client nobody runs.
+  const perCert = Math.max(st.bytesPerRecentCertificate, 1);
+  const certificatesUntilFull = Math.floor((TURSO_FREE_BYTES - st.bytes) / perCert);
+
+  const infra = `<section class="sheet-section">
+    <h2>Infrastructure</h2>
+    <p class="section-note">Measured from the database itself. No provider tokens are stored here: a Vercel or Turso platform token can create and destroy infrastructure, and keeping one in a web process to render a number would turn this page into a deployment credential.</p>
+    <div class="stats">
+      ${stat("Database", `${mb(st.bytes)} MB`, `${usedPct.toFixed(3)}% of the 5 GB free tier`)}
+      ${stat("Per certificate", `${(perCert / 1024).toFixed(0)} KB`, `telemetry, across ${st.certificatesMeasured} current-format runs`)}
+      ${stat("Room left", certificatesUntilFull.toLocaleString("en-GB"), "more certificates before 5 GB")}
+      ${stat("Runs / month", runsPerMonthBeforeWriteLimit.toLocaleString("en-GB"), `before the ${(TURSO_FREE_WRITES_MONTHLY / 1e6).toFixed(0)}M write limit`)}
+    </div>
+    <table class="admin">
+      <thead><tr><th>What is using the space</th><th>Size</th><th>Share</th></tr></thead>
+      <tbody>
+        <tr><td>Stress telemetry on certificates</td><td class="mono">${mb(st.telemetryBytes)} MB</td><td class="mono">${((st.telemetryBytes / Math.max(st.bytes, 1)) * 100).toFixed(0)}%</td></tr>
+        <tr><td>Run logs on sessions</td><td class="mono">${mb(st.logBytes)} MB</td><td class="mono">${((st.logBytes / Math.max(st.bytes, 1)) * 100).toFixed(0)}%</td></tr>
+        <tr><td>Machine environments on sessions</td><td class="mono">${mb(st.environmentBytes)} MB</td><td class="mono">${((st.environmentBytes / Math.max(st.bytes, 1)) * 100).toFixed(0)}%</td></tr>
+        <tr><td>Everything else</td><td class="mono">${mb(Math.max(st.bytes - st.telemetryBytes - st.logBytes - st.environmentBytes, 0))} MB</td><td class="mono">rest</td></tr>
+      </tbody>
+    </table>
+    <p class="section-note">Vercel usage is not read here for the same credential reason. A run costs roughly ${WRITES_PER_RUN} requests, so request volume tracks the run count above; the dashboard at vercel.com has the authoritative bandwidth and invocation figures.</p>
+  </section>`;
 
   const reportRows = opts.reports
     .map((r) => {
@@ -973,6 +1018,8 @@ export function renderAdmin(opts: {
         ${stat("Page views", o.page_views, `${pct(o.page_views, o.badge_views)}% clickthrough`)}
         ${stat("Feedback", o.feedback)}
       </div>
+
+      ${infra}
 
       ${detail}
 
