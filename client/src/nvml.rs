@@ -484,6 +484,20 @@ impl Nvml {
                 // 0% for a full five-minute run with its fans plainly turning
                 // (report 15ccec8b, the run that found this).
                 //
+                // NVAPI is the obvious next thought and was checked before
+                // giving up. NvAPI_GPU_GetTachReading does return a real
+                // tachometer value, which is how GPU-Z and HWiNFO show RPM. It
+                // reads ONE fan, though, and multi-fan cards are documented by
+                // the people who ship fan control software as reporting
+                // incorrect or entirely wrong values through it. The API that
+                // enumerates every cooler, NvAPI_GPU_ClientFanCoolersGetStatus,
+                // is not in the public NVAPI SDK. Every card this has run on so
+                // far has more than one fan, so the reachable reading would be
+                // a number that looks like a measurement of the card and is
+                // actually a measurement of one third of its cooler. Feeding
+                // that to a stall check invites the false FAIL this project has
+                // spent a week removing.
+                //
                 // AMD is genuinely different and keeps its fan check: ADL reads
                 // PMLOG_FAN_RPM, a measured tachometer value from the SMU.
                 fan_rpm: None,
